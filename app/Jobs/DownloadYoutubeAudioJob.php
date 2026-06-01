@@ -102,12 +102,31 @@ class DownloadYoutubeAudioJob implements ShouldQueue
             // Step 4: Download audio using yt-dlp
             Log::info('Downloading audio', ['url' => $this->download->youtube_url]);
             
+            $lastReportedProgress = 20;
             try {
                 $youtubeService->downloadAudio(
                     $this->download->youtube_url,
                     $tempFile,
                     $this->download->format,
-                    (int) $this->download->quality
+                    (int) $this->download->quality,
+                    function ($progress, $size = null) use (&$lastReportedProgress) {
+                        // yt-dlp progress is 0 to 100
+                        // Map it to the 20-50 overall progress range
+                        $overallProgress = 20 + ($progress * 0.3);
+                        $intProgress = (int) $overallProgress;
+                        
+                        $sizeText = $size ? " ($size)" : "";
+                        $statusText = "Downloading video stream... {$progress}%{$sizeText}";
+                        
+                        // Only update the database when the integer percentage changes to avoid spamming
+                        if ($intProgress > $lastReportedProgress) {
+                            $this->download->update([
+                                'progress' => $intProgress,
+                                'status_text' => $statusText
+                            ]);
+                            $lastReportedProgress = $intProgress;
+                        }
+                    }
                 );
             } catch (Exception $e) {
                 throw new YouTubeDownloadException(
@@ -115,7 +134,8 @@ class DownloadYoutubeAudioJob implements ShouldQueue
                 );
             }
 
-            $this->download->updateProgress(60);
+            $this->download->updateProgress(50);
+            $this->download->update(['status_text' => 'Download complete. Preparing for conversion...']);
 
             // Step 5: Find the downloaded file (yt-dlp adds extension)
             $downloadedFile = null;
@@ -129,21 +149,49 @@ class DownloadYoutubeAudioJob implements ShouldQueue
             if (!$downloadedFile || !file_exists($downloadedFile)) {
                 throw new YouTubeDownloadException('Downloaded file not found');
             }
+            
+            $originalFileSize = filesize($downloadedFile);
+            $this->download->update(['original_file_size' => $originalFileSize]);
 
-            $this->download->updateProgress(70);
+            $this->download->updateProgress(60);
 
-            // Step 6: Convert if necessary (yt-dlp should handle this, but double-check)
+            // Step 6: Convert if necessary (since we removed -x from yt-dlp, it will be necessary)
             $needsConversion = pathinfo($downloadedFile, PATHINFO_EXTENSION) !== $this->download->format;
             
             if ($needsConversion) {
                 Log::info('Converting audio format');
+                
+                $duration = $this->download->duration ?: 1; // avoid division by zero
+                $lastConversionProgress = 0;
                 
                 try {
                     $audioConverter->convert(
                         $downloadedFile,
                         $finalFile,
                         $this->download->format,
-                        (int) $this->download->quality
+                        (int) $this->download->quality,
+                        function ($sizeKb, $timeStr) use ($duration, &$lastConversionProgress) {
+                            // parse timeStr "00:00:10.00" to seconds
+                            $parts = explode(':', $timeStr);
+                            if (count($parts) === 3) {
+                                $seconds = ($parts[0] * 3600) + ($parts[1] * 60) + (float)$parts[2];
+                                $percent = min(100, max(0, ($seconds / $duration) * 100));
+                                $intPercent = (int) $percent;
+                                
+                                if ($intPercent > $lastConversionProgress) {
+                                    // Map 0-100 conversion to 60-80 overall progress
+                                    $overallProgress = 60 + ($percent * 0.2);
+                                    
+                                    $sizeMb = number_format($sizeKb / 1024, 2);
+                                    $this->download->update([
+                                        'progress' => (int) $overallProgress,
+                                        'conversion_progress' => $intPercent,
+                                        'status_text' => "Converting to {$this->download->format}... {$intPercent}% ({$sizeMb} MB)"
+                                    ]);
+                                    $lastConversionProgress = $intPercent;
+                                }
+                            }
+                        }
                     );
                     
                     // Remove temp file after conversion

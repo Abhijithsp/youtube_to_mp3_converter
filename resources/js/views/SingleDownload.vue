@@ -174,12 +174,22 @@
         <ProgressBar 
           v-if="['pending', 'processing'].includes(currentDownload.status)"
           :progress="currentDownload.progress"
-          label="Downloading and converting..."
+          :label="currentDownload.status_text || 'Preparing download...'"
         />
 
         <!-- Error Message -->
         <div v-if="currentDownload.status === 'failed'" class="p-4 bg-red-900/30 border border-red-500/50 rounded-lg">
           <p class="text-sm text-red-200">{{ currentDownload.error_message }}</p>
+        </div>
+
+        <!-- File Sizes -->
+        <div v-if="currentDownload.original_file_size || currentDownload.file_size" class="flex space-x-4 text-sm mt-2 mb-4">
+          <div v-if="currentDownload.original_file_size" class="px-4 py-2 bg-gray-900/50 rounded-lg border border-gray-700 text-gray-300">
+            <span class="font-semibold text-purple-400">Original Size:</span> {{ formatBytes(currentDownload.original_file_size) }}
+          </div>
+          <div v-if="currentDownload.file_size" class="px-4 py-2 bg-gray-900/50 rounded-lg border border-gray-700 text-gray-300">
+            <span class="font-semibold text-pink-400">Converted Size:</span> {{ formatBytes(currentDownload.file_size) }}
+          </div>
         </div>
 
         <!-- Action Buttons -->
@@ -458,6 +468,14 @@ export default {
       const m = Math.floor(seconds / 60);
       const s = seconds % 60;
       return `${m}:${s.toString().padStart(2, '0')}`;
+    },
+    
+    formatBytes(bytes) {
+      if (bytes === 0 || !bytes) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
   },
   beforeUnmount() {

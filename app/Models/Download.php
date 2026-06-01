@@ -18,10 +18,13 @@ class Download extends Model
         'quality',
         'file_path',
         'file_size',
+        'original_file_size',
         'duration',
         'status',
+        'status_text',
         'error_message',
         'progress',
+        'conversion_progress',
         'download_url',
         'completed_at',
     ];
@@ -29,8 +32,10 @@ class Download extends Model
     protected $casts = [
         'quality' => 'string',
         'file_size' => 'integer',
+        'original_file_size' => 'integer',
         'duration' => 'integer',
         'progress' => 'integer',
+        'conversion_progress' => 'integer',
         'completed_at' => 'datetime',
     ];
 

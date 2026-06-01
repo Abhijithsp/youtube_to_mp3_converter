@@ -22,7 +22,7 @@ class YouTubeService
      */
     public function extractVideoId(string $url): ?string
     {
-        $pattern = '/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/';
+        $pattern = '/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?|shorts)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/';
         preg_match($pattern, $url, $matches);
         return $matches[1] ?? null;
     }
@@ -168,32 +168,36 @@ class YouTubeService
     /**
      * Download audio from YouTube video
      */
-    public function downloadAudio(string $url, string $outputPath, string $format = 'mp3', int $quality = 320): bool
+    public function downloadAudio(string $url, string $outputPath, string $format = 'mp3', int $quality = 320, ?callable $progressCallback = null): bool
     {
         try {
-            $qualityMap = [
-                192 => '192K',
-                256 => '256K',
-                320 => '320K',
-            ];
-
-            $bitrateOption = $qualityMap[$quality] ?? '320K';
-
             // Build command as array for better handling
             $command = [
                 'yt-dlp',
-                '-x',
-                '--audio-format', $format,
-                '--audio-quality', $bitrateOption,
+                '-f', 'bestaudio', // Download best audio format only
                 '-o', $outputPath,
                 '--no-playlist',
+                '--newline', // Force newline output for easier parsing
                 '--no-warnings',
                 $url
             ];
 
             Log::info('Executing yt-dlp command', ['command' => implode(' ', $command)]);
 
-            $result = Process::env($this->getProcessEnv())->timeout(600)->run($command);
+            if ($progressCallback) {
+                $result = Process::env($this->getProcessEnv())->timeout(600)->run($command, function (string $type, string $output) use ($progressCallback) {
+                    if (preg_match_all('/\[download\]\s+([\d\.]+)%\s+of\s+~?\s*([\d\.]+[KMG]iB|[\d\.]+B)/', $output, $matches)) {
+                        $lastProgress = end($matches[1]);
+                        $lastSize = end($matches[2]);
+                        $progressCallback((float) $lastProgress, $lastSize);
+                    } elseif (preg_match_all('/\[download\]\s+([\d\.]+)%/', $output, $matches)) {
+                        $lastProgress = end($matches[1]);
+                        $progressCallback((float) $lastProgress, null);
+                    }
+                });
+            } else {
+                $result = Process::env($this->getProcessEnv())->timeout(600)->run($command);
+            }
 
             if (!$result->successful()) {
                 Log::error('yt-dlp command failed', [

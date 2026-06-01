@@ -11,7 +11,7 @@ class AudioConverterService
     /**
      * Convert audio file to specified format and quality
      */
-    public function convert(string $inputPath, string $outputPath, string $format = 'mp3', int $quality = 320): bool
+    public function convert(string $inputPath, string $outputPath, string $format = 'mp3', int $quality = 320, ?callable $progressCallback = null): bool
     {
         try {
             if (!file_exists($inputPath)) {
@@ -41,7 +41,18 @@ class AudioConverterService
                 escapeshellarg($outputPath)
             );
 
-            $result = Process::timeout(600)->run($command);
+            if ($progressCallback) {
+                $result = Process::timeout(600)->run($command, function (string $type, string $output) use ($progressCallback) {
+                    // Match size=  1280kB time=00:00:10.00
+                    if (preg_match_all('/size=\s*(\d+)kB\s+time=([\d:]+\.\d+)/', $output, $matches)) {
+                        $lastSizeKb = end($matches[1]);
+                        $lastTime = end($matches[2]);
+                        $progressCallback((int) $lastSizeKb, $lastTime);
+                    }
+                });
+            } else {
+                $result = Process::timeout(600)->run($command);
+            }
 
             if (!$result->successful()) {
                 throw new Exception('Conversion failed: ' . $result->errorOutput());

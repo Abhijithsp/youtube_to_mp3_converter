@@ -44,7 +44,8 @@ class MetadataService
                 return true; // No metadata to add
             }
 
-            $tempPath = $filePath . '.temp';
+            $ext = pathinfo($filePath, PATHINFO_EXTENSION);
+            $tempPath = pathinfo($filePath, PATHINFO_DIRNAME) . '/' . pathinfo($filePath, PATHINFO_FILENAME) . '_temp.' . $ext;
 
             $command = sprintf(
                 'ffmpeg -i "%s" %s -codec copy "%s" -y',
@@ -112,7 +113,8 @@ class MetadataService
                 throw new Exception("Thumbnail file does not exist: {$thumbnailPath}");
             }
 
-            $tempPath = $audioPath . '.temp';
+            $ext = pathinfo($audioPath, PATHINFO_EXTENSION);
+            $tempPath = pathinfo($audioPath, PATHINFO_DIRNAME) . '/' . pathinfo($audioPath, PATHINFO_FILENAME) . '_temp.' . $ext;
 
             $command = sprintf(
                 'ffmpeg -i "%s" -i "%s" -map 0:0 -map 1:0 -c copy -id3v2_version 3 -metadata:s:v title="Album cover" -metadata:s:v comment="Cover (front)" "%s" -y',
