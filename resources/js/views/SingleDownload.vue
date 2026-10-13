@@ -1,7 +1,80 @@
 <template>
   <div class="mx-auto max-w-2xl">
-    <PageHeader title="Download" subtitle="Paste a YouTube link, or search, and save it as MP3, FLAC or WAV." />
+    <PageHeader title="Download" subtitle="Paste a YouTube link, or search, and save it as MP3, FLAC or WAV.">
+      <SegmentedControl v-model="mode" label="Mode" compact :options="modeOptions" :disabled="busy" />
+    </PageHeader>
 
+    <!-- Several links at once -->
+    <template v-if="mode === 'bulk'">
+      <section v-if="!bulkResult" class="card space-y-4 p-4 animate-fade-up">
+        <div>
+          <label for="bulk-links" class="field-label">YouTube links</label>
+          <textarea
+            id="bulk-links"
+            ref="bulk"
+            v-model="bulkText"
+            rows="7"
+            class="field scroll-thin !h-auto resize-y py-3 font-mono !text-sm leading-relaxed"
+            placeholder="Paste one or more links, one per line (or separated by spaces)…"
+            spellcheck="false"
+          />
+          <p class="field-hint">
+            <template v-if="bulkLinks.length">
+              {{ bulkLinks.length }} link{{ bulkLinks.length === 1 ? '' : 's' }} found<template v-if="bulkLinks.length > bulkLimit">, only the first {{ bulkLimit }} are queued</template>.
+              Playlist links are skipped; use the Playlist page for those.
+            </template>
+            <template v-else>Up to {{ bulkLimit }} links. Anything that is not a YouTube link is ignored.</template>
+          </p>
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <span class="field-label">Format</span>
+            <SegmentedControl v-model="format" label="Format" :options="formatOptions" :disabled="submitting" />
+          </div>
+          <div>
+            <span class="field-label">Bitrate</span>
+            <SegmentedControl v-model="quality" label="Bitrate" :options="qualityOptions" :disabled="submitting || format !== 'mp3'" />
+          </div>
+        </div>
+
+        <button type="button" class="btn btn-filled w-full" :disabled="submitting || !bulkLinks.length" @click="submitBulk">
+          <AppIcon :path="submitting ? mdiLoading : mdiPlaylistPlus" :size="18" :spin="submitting" />
+          {{ submitting ? 'Queueing…' : `Queue ${Math.min(bulkLinks.length, bulkLimit) || ''} download${bulkLinks.length === 1 ? '' : 's'}` }}
+        </button>
+      </section>
+
+      <section v-else class="card overflow-hidden animate-fade-up">
+        <div class="flex items-center gap-3 border-b border-line px-4 py-3">
+          <span class="tile-icon h-10 w-10 shrink-0" :class="bulkResult.queued.length ? 'bg-success-soft text-success' : 'bg-warning-soft text-warning'">
+            <AppIcon :path="bulkResult.queued.length ? mdiCheckAll : mdiAlertCircle" :size="22" />
+          </span>
+          <div class="min-w-0">
+            <h2 class="card-title">{{ bulkResult.queued.length }} queued<template v-if="bulkResult.skipped.length">, {{ bulkResult.skipped.length }} skipped</template></h2>
+            <p class="text-xs text-fg-muted">Downloads run one after another; follow them in the queue.</p>
+          </div>
+        </div>
+        <ul v-if="bulkResult.skipped.length" class="divide-y divide-line">
+          <li v-for="item in bulkResult.skipped" :key="item.url" class="flex items-center gap-3 px-4 py-2.5">
+            <AppIcon :path="mdiSkipNextCircleOutline" :size="20" class="text-fg-muted" />
+            <span class="min-w-0 flex-1 truncate font-mono text-xs text-fg" :title="item.url">{{ item.url }}</span>
+            <span class="chip shrink-0 !normal-case !tracking-normal">{{ item.reason }}</span>
+          </li>
+        </ul>
+        <div class="flex flex-wrap justify-end gap-2 border-t border-line px-4 py-3">
+          <button type="button" class="btn btn-outlined btn-sm" @click="resetBulk">
+            <AppIcon :path="mdiPlus" :size="18" />
+            Add more
+          </button>
+          <router-link v-if="bulkResult.queued.length" to="/queue" class="btn btn-filled btn-sm">
+            <AppIcon :path="mdiTrayFull" :size="18" />
+            Open queue
+          </router-link>
+        </div>
+      </section>
+    </template>
+
+    <template v-else>
     <!-- Link or search -->
     <form class="card p-4" @submit.prevent="submitInput">
       <label for="url" class="field-label">YouTube link or search</label>
@@ -225,6 +298,7 @@
         </a>
       </div>
     </section>
+    </template>
   </div>
 </template>
 
@@ -232,6 +306,7 @@
 import {
   mdiAlertCircle,
   mdiArrowLeft,
+  mdiCheckAll,
   mdiChevronRight,
   mdiClose,
   mdiContentPaste,
@@ -242,7 +317,10 @@ import {
   mdiPlay,
   mdiPlus,
   mdiRefresh,
+  mdiPlaylistPlus,
+  mdiSkipNextCircleOutline,
   mdiStopCircleOutline,
+  mdiTrayFull,
   mdiTrayArrowDown,
 } from '@mdi/js';
 import AppIcon from '../components/AppIcon.vue';
@@ -252,13 +330,21 @@ import PageHeader from '../components/PageHeader.vue';
 import SegmentedControl from '../components/SegmentedControl.vue';
 import { isCurrent, player, toggle } from '../player';
 import { downloadAPI, searchAPI } from '../services/api';
-import { errorMessage, formatDuration, looksLikeYoutubeUrl, notify, parseTime, YOUTUBE_URL } from '../ui';
+import { errorMessage, extractYoutubeLinks, formatDuration, looksLikeYoutubeUrl, notify, parseTime, YOUTUBE_URL } from '../ui';
 
 export default {
   name: 'SingleDownload',
   components: { AppIcon, Disclosure, DownloadRow, PageHeader, SegmentedControl },
   data() {
     return {
+      mode: 'single', // single | bulk
+      modeOptions: [
+        { value: 'single', label: 'Single link' },
+        { value: 'bulk', label: 'Multiple links' },
+      ],
+      bulkText: '',
+      bulkResult: null,
+      bulkLimit: 50,
       input: '',
       inputError: '',
       results: [],
@@ -290,6 +376,7 @@ export default {
       ],
       mdiAlertCircle,
       mdiArrowLeft,
+      mdiCheckAll,
       mdiChevronRight,
       mdiClose,
       mdiContentPaste,
@@ -300,11 +387,17 @@ export default {
       mdiPlay,
       mdiPlus,
       mdiRefresh,
+      mdiPlaylistPlus,
+      mdiSkipNextCircleOutline,
       mdiStopCircleOutline,
+      mdiTrayFull,
       mdiTrayArrowDown,
     };
   },
   computed: {
+    bulkLinks() {
+      return extractYoutubeLinks(this.bulkText);
+    },
     isUrl() {
       return looksLikeYoutubeUrl(this.input);
     },
@@ -348,6 +441,9 @@ export default {
     },
   },
   watch: {
+    mode(mode) {
+      if (mode === 'bulk') this.$nextTick(() => this.$refs.bulk?.focus());
+    },
     // Opening a search from Home (?q=) or a link (?url=)
     '$route.query': {
       handler(query) {
@@ -379,6 +475,16 @@ export default {
 
     onInput() {
       this.inputError = '';
+
+      // Several links pasted into the single box: switch to bulk mode with them
+      const links = extractYoutubeLinks(this.input);
+      if (links.length > 1) {
+        this.bulkText = links.join('\n');
+        this.input = '';
+        this.mode = 'bulk';
+        return;
+      }
+
       clearTimeout(this.debounceTimer);
       if (this.isUrl) {
         this.video = null;
@@ -538,6 +644,34 @@ export default {
       } catch (error) {
         notify(errorMessage(error, 'Could not cancel'), 'error');
       }
+    },
+
+    async submitBulk() {
+      this.submitting = true;
+      try {
+        const { data } = await downloadAPI.bulk({
+          urls: this.bulkLinks.slice(0, this.bulkLimit),
+          format: this.format,
+          quality: this.quality,
+        });
+        this.bulkResult = data;
+        notify(data.message, 'success');
+      } catch (error) {
+        // 422 with a result means every link was skipped: show why
+        if (error.response?.data?.skipped) {
+          this.bulkResult = error.response.data;
+        } else {
+          notify(errorMessage(error, 'Could not queue the links'), 'error');
+        }
+      } finally {
+        this.submitting = false;
+      }
+    },
+
+    resetBulk() {
+      this.bulkResult = null;
+      this.bulkText = '';
+      this.$nextTick(() => this.$refs.bulk?.focus());
     },
 
     reset() {

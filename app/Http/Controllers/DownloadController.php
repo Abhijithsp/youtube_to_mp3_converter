@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Download;
 use App\Jobs\DownloadYoutubeAudioJob;
+use App\Services\MetadataService;
 use App\Services\YouTubeService;
 use App\Models\Setting;
 use App\Support\FileName;
@@ -17,6 +18,11 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class DownloadController extends Controller
 {
+    /**
+     * Most links accepted by one bulk request
+     */
+    private const BULK_LIMIT = 50;
+
     public function __construct(
         private YouTubeService $youtubeService
     ) {}
@@ -102,18 +108,8 @@ class DownloadController extends Controller
 
             $edited = $request->filled('trim_start') || $request->filled('trim_end') || $request->boolean('remove_silence');
 
-            // Reuse an earlier download only if it has the same format/quality, was not
-            // trimmed, and its file still exists. Edited downloads are always made fresh.
-            $existing = $edited ? null : Download::where('youtube_id', $videoId)
-                ->where('status', 'completed')
-                ->where('format', $request->format)
-                ->where('quality', (string) $request->quality)
-                ->whereNull('trim_start')
-                ->whereNull('trim_end')
-                ->where('remove_silence', false)
-                ->latest()
-                ->get()
-                ->first(fn (Download $download) => $download->file_path && file_exists($download->file_path));
+            // Edited (trimmed) downloads are always made fresh
+            $existing = $edited ? null : $this->findExisting($videoId, $request->format, (string) $request->quality);
 
             if ($existing) {
                 return response()->json([
@@ -156,6 +152,197 @@ class DownloadController extends Controller
                 'message' => 'Failed to start download: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Queue several videos at once (links pasted into one box)
+     */
+    public function bulk(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'urls' => 'required|array|min:1|max:' . self::BULK_LIMIT,
+            'urls.*' => 'required|string|max:2000',
+            'format' => ['required', Rule::in(Download::FORMATS)],
+            'quality' => 'required|in:192,256,320',
+        ], [
+            'urls.max' => 'Paste at most ' . self::BULK_LIMIT . ' links at a time.',
+        ]);
+
+        $delaySeconds = (int) Setting::get('rate_limit_seconds', config('youtube-converter.rate_limit_seconds', 2));
+        $queued = [];
+        $skipped = [];
+        $seen = [];
+
+        foreach ($data['urls'] as $url) {
+            $url = trim($url);
+
+            if (!$this->youtubeService->validateUrl($url)) {
+                $skipped[] = ['url' => $url, 'reason' => 'Not a YouTube link'];
+                continue;
+            }
+
+            $videoId = $this->youtubeService->extractVideoId($url);
+
+            if (!$videoId) {
+                $skipped[] = ['url' => $url, 'reason' => $this->youtubeService->extractPlaylistId($url)
+                    ? 'Playlist link: import it on the Playlist page'
+                    : 'No video found in this link'];
+                continue;
+            }
+
+            if (isset($seen[$videoId])) {
+                $skipped[] = ['url' => $url, 'reason' => 'Listed twice'];
+                continue;
+            }
+            $seen[$videoId] = true;
+
+            if ($existing = $this->findExisting($videoId, $data['format'], (string) $data['quality'])) {
+                $skipped[] = ['url' => $url, 'reason' => 'Already downloaded', 'download' => $existing];
+                continue;
+            }
+
+            $download = Download::create([
+                'youtube_url' => $url,
+                'youtube_id' => $videoId,
+                'title' => Download::PLACEHOLDER_TITLE,
+                'format' => $data['format'],
+                'quality' => (string) $data['quality'],
+                'status' => 'pending',
+            ]);
+
+            // Spaced out like playlist imports, to avoid YouTube rate limits
+            DownloadYoutubeAudioJob::dispatch($download)->delay(now()->addSeconds(count($queued) * $delaySeconds));
+
+            $queued[] = $download;
+        }
+
+        return response()->json([
+            'success' => count($queued) > 0,
+            'message' => count($queued)
+                ? 'Queued ' . count($queued) . ' download' . (count($queued) === 1 ? '' : 's') . '.'
+                : 'Nothing was queued.',
+            'queued' => $queued,
+            'skipped' => $skipped,
+        ], count($queued) ? 201 : 422);
+    }
+
+    /**
+     * Edit the tags of a finished download: re-tags the file and renames it to the new title
+     */
+    public function update(Request $request, Download $download, MetadataService $metadataService): JsonResponse
+    {
+        $data = $request->validate([
+            'title' => 'required|string|max:255',
+            'artist' => 'nullable|string|max:255',
+            'album' => 'nullable|string|max:255',
+            'year' => 'nullable|integer|min:1900|max:2100',
+            'genre' => 'nullable|string|max:100',
+            'rename' => 'nullable|boolean',
+        ]);
+
+        if ($download->status !== 'completed' || !$download->file_path || !file_exists($download->file_path)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only finished downloads whose file still exists can be edited.',
+            ], 422);
+        }
+
+        $tags = [
+            'title' => trim($data['title']),
+            'artist' => trim((string) ($data['artist'] ?? '')) ?: null,
+            'album' => trim((string) ($data['album'] ?? '')) ?: null,
+            'year' => $data['year'] ?? null,
+            'genre' => trim((string) ($data['genre'] ?? '')) ?: null,
+        ];
+
+        $path = $download->file_path;
+
+        try {
+            // Rewrite the tags in the file (cover art is kept); cleared fields remove the tag
+            $metadataService->tagFile($path, [
+                'title' => TrackTitle::songTitle($tags['title'], $tags['artist']),
+                'artist' => $tags['artist'],
+                'album' => $tags['album'],
+                'year' => $tags['year'],
+                'genre' => $tags['genre'],
+            ], clearEmpty: true);
+
+            if ($request->boolean('rename', true)) {
+                $path = $this->renameToTitle($path, $tags['title'], $download->format);
+            }
+        } catch (\Throwable $e) {
+            $locked = preg_match('/Permission denied|being used by another process|resource busy/i', $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => $locked
+                    ? 'The file is in use (is it playing or open in another app?). Close it and try again.'
+                    : 'Could not update the file: ' . $e->getMessage(),
+            ], $locked ? 409 : 500);
+        }
+
+        clearstatcache(true, $path);
+        $download->update($tags + [
+            'file_path' => $path,
+            'file_size' => filesize($path),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Tags updated.',
+            'download' => $download->fresh(),
+        ]);
+    }
+
+    /**
+     * Rename a file to "<title>.<ext>" in the same folder, without overwriting other files
+     */
+    private function renameToTitle(string $path, string $title, string $extension): string
+    {
+        $directory = dirname($path);
+        $current = basename($path);
+        $name = FileName::fromTitle($title, pathinfo($path, PATHINFO_FILENAME));
+
+        // Candidates: "Title.mp3", "Title (1).mp3", ... The first that is free, or that
+        // is this very file (e.g. it is already "Title (1).mp3", or only the letter case
+        // differs, which Windows treats as the same name), wins.
+        for ($counter = 0; ; $counter++) {
+            $candidate = $name . ($counter ? " ({$counter})" : '') . '.' . $extension;
+
+            if ($candidate === $current) {
+                return $path;
+            }
+
+            if (strcasecmp($candidate, $current) === 0 || !file_exists($directory . DIRECTORY_SEPARATOR . $candidate)) {
+                break;
+            }
+        }
+
+        $target = $directory . DIRECTORY_SEPARATOR . $candidate;
+
+        if (!@rename($path, $target)) {
+            throw new \RuntimeException('Permission denied while renaming the file');
+        }
+
+        return $target;
+    }
+
+    /**
+     * An earlier, untrimmed download of the same video in the same format/quality
+     * whose file still exists
+     */
+    private function findExisting(string $videoId, string $format, string $quality): ?Download
+    {
+        return Download::where('youtube_id', $videoId)
+            ->where('status', 'completed')
+            ->where('format', $format)
+            ->where('quality', $quality)
+            ->whereNull('trim_start')
+            ->whereNull('trim_end')
+            ->where('remove_silence', false)
+            ->latest()
+            ->get()
+            ->first(fn (Download $download) => $download->file_path && file_exists($download->file_path));
     }
 
     /**

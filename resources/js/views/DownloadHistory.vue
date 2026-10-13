@@ -65,6 +65,9 @@
             >
               <AppIcon :path="isPlaying(d) ? mdiPauseCircle : mdiPlayCircleOutline" />
             </button>
+            <button type="button" class="icon-btn" title="Edit tags" aria-label="Edit tags" @click="editing = d">
+              <AppIcon :path="mdiPencilOutline" />
+            </button>
             <a :href="d.download_url" class="icon-btn" title="Save file" aria-label="Save file">
               <AppIcon :path="mdiTrayArrowDown" />
             </a>
@@ -85,6 +88,8 @@
         </button>
       </div>
     </section>
+
+    <TagEditorDialog :download="editing" @close="editing = null" @saved="onSaved" />
   </div>
 </template>
 
@@ -93,6 +98,7 @@ import {
   mdiChevronLeft,
   mdiChevronRight,
   mdiDeleteOutline,
+  mdiPencilOutline,
   mdiDeleteSweepOutline,
   mdiHistory,
   mdiPlay,
@@ -107,13 +113,14 @@ import AppIcon from '../components/AppIcon.vue';
 import DownloadRow from '../components/DownloadRow.vue';
 import EmptyState from '../components/EmptyState.vue';
 import PageHeader from '../components/PageHeader.vue';
+import TagEditorDialog from '../components/TagEditorDialog.vue';
 import { downloadAPI, historyAPI } from '../services/api';
 import { forget, isCurrent, player, playAll, stop, toggle } from '../player';
 import { confirmDialog, errorMessage, notify } from '../ui';
 
 export default {
   name: 'DownloadHistory',
-  components: { AppIcon, DownloadRow, EmptyState, PageHeader },
+  components: { AppIcon, DownloadRow, EmptyState, PageHeader, TagEditorDialog },
   data() {
     return {
       downloads: [],
@@ -127,9 +134,11 @@ export default {
       searchTimer: null,
       player,
       startingAll: false,
+      editing: null,
       mdiChevronLeft,
       mdiChevronRight,
       mdiDeleteOutline,
+      mdiPencilOutline,
       mdiDeleteSweepOutline,
       mdiHistory,
       mdiPlay,
@@ -200,6 +209,11 @@ export default {
 
     isPlaying(download) {
       return isCurrent(download) && player.playing;
+    },
+
+    onSaved(updated) {
+      this.editing = null;
+      this.downloads = this.downloads.map((d) => (d.id === updated.id ? updated : d));
     },
 
     async remove(download) {

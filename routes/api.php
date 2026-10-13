@@ -17,7 +17,9 @@ Route::prefix('downloads')->group(function () {
     Route::post('/fetch-info', [DownloadController::class, 'fetchInfo']);
     Route::get('/', [DownloadController::class, 'index']);
     Route::post('/', [DownloadController::class, 'store']);
+    Route::post('/bulk', [DownloadController::class, 'bulk']);
     Route::get('/{download}', [DownloadController::class, 'show']);
+    Route::patch('/{download}', [DownloadController::class, 'update']);
     Route::delete('/{download}', [DownloadController::class, 'destroy']);
     Route::post('/{download}/retry', [DownloadController::class, 'retry']);
     Route::post('/{download}/cancel', [DownloadController::class, 'cancel']);

@@ -124,6 +124,12 @@ export function formatRelative(value) {
     return date.toLocaleDateString();
 }
 
+/** All YouTube links in a block of text (one per line, spaces, commas...), without duplicates */
+export function extractYoutubeLinks(text) {
+    const found = String(text ?? '').match(/(?:https?:\/\/)?(?:(?:www|m|music)\.)?(?:youtube\.com|youtu\.be)\/[^\s,;"'<>]+/gi) || [];
+    return [...new Set(found.map((link) => (/^https?:\/\//i.test(link) ? link : `https://${link}`)))];
+}
+
 /** True for anything that is meant as a YouTube link (vs. search words) */
 export function looksLikeYoutubeUrl(text) {
     return /^(https?:\/\/)?((www|m|music)\.)?(youtube\.com|youtu\.be)\//i.test(String(text ?? '').trim());

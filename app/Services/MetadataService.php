@@ -11,9 +11,12 @@ use Illuminate\Support\Facades\Process;
 class MetadataService
 {
     /**
-     * Tag audio file with metadata
+     * Tag audio file with metadata.
+     *
+     * With $clearEmpty, empty values remove the existing tag (used when editing tags);
+     * otherwise they are left out.
      */
-    public function tagFile(string $filePath, array $metadata): bool
+    public function tagFile(string $filePath, array $metadata, bool $clearEmpty = false): bool
     {
         try {
             if (!file_exists($filePath)) {
@@ -31,9 +34,12 @@ class MetadataService
             $metadataArgs = [];
 
             foreach ($tagMap as $key => $tag) {
-                if (!empty($metadata[$key])) {
+                $value = trim((string) ($metadata[$key] ?? ''));
+
+                if ($value !== '' || ($clearEmpty && array_key_exists($key, $metadata))) {
+                    // "tag=" (empty) makes ffmpeg drop the tag
                     $metadataArgs[] = '-metadata';
-                    $metadataArgs[] = "{$tag}={$metadata[$key]}";
+                    $metadataArgs[] = "{$tag}={$value}";
                 }
             }
 
@@ -43,9 +49,13 @@ class MetadataService
 
             $tempPath = $this->tempPathFor($filePath);
 
-            $result = Process::timeout(300)->run([
-                'ffmpeg', '-y', '-i', $filePath, ...$metadataArgs, '-codec', 'copy', $tempPath,
-            ]);
+            // -map 0 keeps every stream, including embedded cover art
+            $command = ['ffmpeg', '-y', '-i', $filePath, '-map', '0', ...$metadataArgs, '-codec', 'copy'];
+            if (strtolower(pathinfo($filePath, PATHINFO_EXTENSION)) === 'mp3') {
+                $command = [...$command, '-id3v2_version', '3'];
+            }
+
+            $result = Process::timeout(300)->run([...$command, $tempPath]);
 
             if (!$result->successful()) {
                 throw new Exception('Metadata tagging failed: ' . ProcessOutput::error($result));
