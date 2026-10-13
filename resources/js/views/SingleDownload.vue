@@ -1,27 +1,33 @@
 <template>
   <div class="mx-auto max-w-2xl">
-    <PageHeader title="Download" subtitle="Convert a YouTube video to MP3 or FLAC with tags and cover art." />
+    <PageHeader title="Download" subtitle="Paste a YouTube link, or search, and save it as MP3, FLAC or WAV." />
 
-    <!-- Link -->
-    <form class="card p-4" @submit.prevent="fetchVideoInfo">
-      <label for="url" class="field-label">YouTube link</label>
+    <!-- Link or search -->
+    <form class="card p-4" @submit.prevent="submitInput">
+      <label for="url" class="field-label">YouTube link or search</label>
       <div class="flex gap-2">
         <div class="relative flex-1">
+          <AppIcon
+            :path="isUrl ? mdiLink : mdiMagnify"
+            :size="20"
+            class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-muted"
+          />
           <input
             id="url"
             ref="url"
-            v-model.trim="url"
-            type="url"
-            inputmode="url"
+            v-model.trim="input"
+            type="text"
+            inputmode="search"
+            enterkeyhint="search"
             autocomplete="off"
-            class="field pr-10"
-            :class="urlError && 'field-error'"
-            placeholder="https://www.youtube.com/watch?v=…"
+            class="field pl-10 pr-10"
+            :class="inputError && 'field-error'"
+            placeholder="Paste a link, or type a song name"
             :disabled="busy"
-            @input="onUrlInput"
+            @input="onInput"
           />
           <button
-            v-if="url && !busy"
+            v-if="input && !busy"
             type="button"
             class="icon-btn absolute right-1 top-1/2 -translate-y-1/2"
             aria-label="Clear"
@@ -30,20 +36,20 @@
             <AppIcon :path="mdiClose" :size="18" />
           </button>
         </div>
-        <button
-          v-if="canPaste && !url"
-          type="button"
-          class="btn btn-tonal shrink-0"
-          @click="paste"
-        >
+        <button v-if="input && !isUrl" type="submit" class="btn btn-filled shrink-0" :disabled="searching || busy">
+          <AppIcon :path="searching ? mdiLoading : mdiMagnify" :size="18" :spin="searching" />
+          <span class="hidden sm:inline">Search</span>
+        </button>
+        <button v-else-if="canPaste && !input" type="button" class="btn btn-tonal shrink-0" @click="paste">
           <AppIcon :path="mdiContentPaste" :size="18" />
           <span class="hidden sm:inline">Paste</span>
         </button>
       </div>
-      <p v-if="urlError" class="mt-2 flex items-start gap-1.5 whitespace-pre-line text-sm text-danger">
+      <p v-if="inputError" class="mt-2 flex items-start gap-1.5 whitespace-pre-line text-sm text-danger">
         <AppIcon :path="mdiAlertCircle" :size="16" class="mt-0.5" />
-        <span>{{ urlError }}</span>
+        <span>{{ inputError }}</span>
       </p>
+      <p v-else-if="input && !isUrl && !results.length && !searching" class="mt-2 text-xs text-fg-muted">Press Enter to search YouTube.</p>
 
       <!-- Loading preview -->
       <div v-if="fetching" class="mt-4 flex gap-3">
@@ -56,19 +62,57 @@
       </div>
 
       <!-- Preview -->
-      <div v-else-if="video" class="mt-4 flex gap-3 animate-fade-up">
-        <div class="relative aspect-video w-36 shrink-0 overflow-hidden rounded-lg bg-surface-3 sm:w-44">
-          <img v-if="video.thumbnail" :src="video.thumbnail" alt="" class="h-full w-full object-cover" />
-          <span v-if="video.duration" class="absolute bottom-1 right-1 rounded bg-black/75 px-1 text-[11px] font-medium text-white">
-            {{ formatDuration(video.duration) }}
-          </span>
-        </div>
-        <div class="min-w-0 py-0.5">
-          <p class="line-clamp-2 text-sm font-medium text-fg">{{ video.title }}</p>
-          <p v-if="video.artist" class="mt-1 truncate text-xs text-fg-muted">{{ video.artist }}</p>
+      <div v-else-if="video" class="mt-4 animate-fade-up">
+        <div class="flex gap-3">
+          <div class="relative aspect-video w-36 shrink-0 overflow-hidden rounded-lg bg-surface-3 shadow-md sm:w-44">
+            <img v-if="video.thumbnail" :src="video.thumbnail" alt="" class="h-full w-full object-cover" />
+            <span v-if="video.duration" class="absolute bottom-1 right-1 rounded bg-black/75 px-1 text-[11px] font-medium text-white">
+              {{ formatDuration(video.duration) }}
+            </span>
+          </div>
+          <div class="min-w-0 py-0.5">
+            <p class="line-clamp-2 text-sm font-medium text-fg">{{ video.title }}</p>
+            <p v-if="video.uploader" class="mt-1 truncate text-xs text-fg-muted">{{ video.uploader }}</p>
+            <button v-if="results.length && !download" type="button" class="btn btn-text btn-sm -ml-3 mt-1" @click="backToResults">
+              <AppIcon :path="mdiArrowLeft" :size="16" />
+              Back to results
+            </button>
+          </div>
         </div>
       </div>
     </form>
+
+    <!-- Search results -->
+    <section v-if="!video && !fetching && (searching || results.length)" class="card mt-3 overflow-hidden animate-fade-up">
+      <div v-if="searching" class="divide-y divide-line">
+        <div v-for="n in 4" :key="n" class="flex items-center gap-3 px-4 py-3">
+          <div class="aspect-video w-28 animate-pulse rounded-lg bg-surface-3" />
+          <div class="flex-1 space-y-2">
+            <div class="h-3 w-3/4 animate-pulse rounded bg-surface-3" />
+            <div class="h-3 w-1/3 animate-pulse rounded bg-surface-3" />
+          </div>
+        </div>
+      </div>
+      <ul v-else class="divide-y divide-line">
+        <li v-for="result in results" :key="result.id">
+          <button type="button" class="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-surface-2 sm:px-4" @click="choose(result)">
+            <div class="relative aspect-video w-28 shrink-0 overflow-hidden rounded-lg bg-surface-3 shadow-sm sm:w-32">
+              <img :src="result.thumbnail" alt="" loading="lazy" class="h-full w-full object-cover" />
+              <span v-if="result.duration" class="absolute bottom-0.5 right-0.5 rounded bg-black/75 px-1 text-[10px] font-medium text-white">
+                {{ formatDuration(result.duration) }}
+              </span>
+            </div>
+            <div class="min-w-0 flex-1">
+              <p class="line-clamp-2 text-sm font-medium text-fg">{{ result.title }}</p>
+              <p class="mt-0.5 truncate text-xs text-fg-muted">
+                {{ result.channel }}<template v-if="result.views"> · {{ formatViews(result.views) }} views</template>
+              </p>
+            </div>
+            <AppIcon :path="mdiChevronRight" class="text-fg-muted" />
+          </button>
+        </li>
+      </ul>
+    </section>
 
     <!-- Options -->
     <section v-if="video && !download" class="card mt-3 space-y-4 p-4 animate-fade-up">
@@ -79,38 +123,76 @@
         </div>
         <div>
           <span class="field-label">Bitrate</span>
-          <SegmentedControl v-model="quality" label="Bitrate" :options="qualityOptions" :disabled="submitting || format === 'flac'" />
+          <SegmentedControl v-model="quality" label="Bitrate" :options="qualityOptions" :disabled="submitting || format !== 'mp3'" />
           <p v-if="format === 'flac'" class="field-hint">FLAC is lossless, so bitrate does not apply.</p>
+          <p v-else-if="format === 'wav'" class="field-hint">WAV is uncompressed 24-bit / 48 kHz. No cover art, large files.</p>
         </div>
       </div>
 
-      <div>
-        <button
-          type="button"
-          class="flex items-center gap-1 text-sm font-medium text-primary"
-          :aria-expanded="showTags"
-          @click="showTags = !showTags"
-        >
-          <AppIcon :path="showTags ? mdiChevronUp : mdiChevronDown" :size="20" />
-          Edit tags
-        </button>
-        <div v-if="showTags" class="mt-3 grid gap-3 sm:grid-cols-2 animate-fade-up">
+      <!-- Trim / silence -->
+      <Disclosure v-model="showEdit" label="Edit audio" :badge="editSummary">
+        <div class="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+          <div>
+            <label for="trim-start" class="field-label">Start at</label>
+            <input
+              id="trim-start"
+              v-model.trim="trim.start"
+              class="field tabular-nums"
+              :class="trimError && 'field-error'"
+              inputmode="numeric"
+              placeholder="0:00"
+            />
+          </div>
+          <div>
+            <label for="trim-end" class="field-label">End at</label>
+            <input
+              id="trim-end"
+              v-model.trim="trim.end"
+              class="field tabular-nums"
+              :class="trimError && 'field-error'"
+              inputmode="numeric"
+              :placeholder="formatDuration(video.duration) || 'end'"
+            />
+          </div>
+          <label class="flex h-11 cursor-pointer items-center gap-3 rounded-xl bg-surface-2 px-3 text-sm text-fg" style="box-shadow: var(--md-inset)">
+            <input v-model="removeSilence" type="checkbox" class="checkbox" />
+            Remove silence
+          </label>
+        </div>
+        <p v-if="trimError" class="field-hint !text-danger">{{ trimError }}</p>
+        <p v-else class="field-hint">
+          Times as m:ss (e.g. 0:15). Silence removal cuts quiet parts at the start and end.
+          <template v-if="keptLength"> The file will be about {{ formatDuration(keptLength) }} long.</template>
+        </p>
+      </Disclosure>
+
+      <!-- Tags -->
+      <Disclosure v-model="showTags" label="Edit tags" :badge="tagsSummary">
+        <div class="grid gap-3 sm:grid-cols-2">
           <div class="sm:col-span-2">
-            <label for="title" class="field-label">Title</label>
+            <label for="title" class="field-label">Title (also the file name)</label>
             <input id="title" v-model="tags.title" class="field" maxlength="255" />
           </div>
           <div>
             <label for="artist" class="field-label">Artist</label>
-            <input id="artist" v-model="tags.artist" class="field" maxlength="255" />
+            <input id="artist" v-model="tags.artist" class="field" maxlength="255" :placeholder="video.uploader || ''" />
           </div>
           <div>
             <label for="album" class="field-label">Album</label>
             <input id="album" v-model="tags.album" class="field" maxlength="255" />
           </div>
+          <div>
+            <label for="year" class="field-label">Year</label>
+            <input id="year" v-model.number="tags.year" type="number" min="1900" max="2100" class="field" />
+          </div>
+          <div>
+            <label for="genre" class="field-label">Genre</label>
+            <input id="genre" v-model="tags.genre" class="field" maxlength="100" placeholder="e.g. Hardstyle" />
+          </div>
         </div>
-      </div>
+      </Disclosure>
 
-      <button type="button" class="btn btn-filled w-full" :disabled="submitting" @click="submit">
+      <button type="button" class="btn btn-filled w-full" :disabled="submitting || !!trimError" @click="submit">
         <AppIcon :path="submitting ? mdiLoading : mdiTrayArrowDown" :size="18" :spin="submitting" />
         {{ submitting ? 'Starting…' : `Download ${format.toUpperCase()}` }}
       </button>
@@ -149,11 +231,13 @@
 <script>
 import {
   mdiAlertCircle,
-  mdiChevronDown,
-  mdiChevronUp,
+  mdiArrowLeft,
+  mdiChevronRight,
   mdiClose,
   mdiContentPaste,
+  mdiLink,
   mdiLoading,
+  mdiMagnify,
   mdiPause,
   mdiPlay,
   mdiPlus,
@@ -162,27 +246,33 @@ import {
   mdiTrayArrowDown,
 } from '@mdi/js';
 import AppIcon from '../components/AppIcon.vue';
+import Disclosure from '../components/Disclosure.vue';
 import DownloadRow from '../components/DownloadRow.vue';
 import PageHeader from '../components/PageHeader.vue';
 import SegmentedControl from '../components/SegmentedControl.vue';
 import { isCurrent, player, toggle } from '../player';
-import { downloadAPI } from '../services/api';
-import { errorMessage, formatDuration, notify, YOUTUBE_URL } from '../ui';
+import { downloadAPI, searchAPI } from '../services/api';
+import { errorMessage, formatDuration, looksLikeYoutubeUrl, notify, parseTime, YOUTUBE_URL } from '../ui';
 
 export default {
   name: 'SingleDownload',
-  components: { AppIcon, DownloadRow, PageHeader, SegmentedControl },
+  components: { AppIcon, Disclosure, DownloadRow, PageHeader, SegmentedControl },
   data() {
     return {
-      url: '',
-      urlError: '',
+      input: '',
+      inputError: '',
+      results: [],
+      searching: false,
       video: null,
       fetching: false,
       submitting: false,
       format: 'mp3',
       quality: '320',
       showTags: false,
-      tags: { title: '', artist: '', album: '' },
+      showEdit: false,
+      tags: { title: '', artist: '', album: '', year: null, genre: '' },
+      trim: { start: '', end: '' },
+      removeSilence: false,
       download: null,
       pollTimer: null,
       debounceTimer: null,
@@ -191,6 +281,7 @@ export default {
       formatOptions: [
         { value: 'mp3', label: 'MP3' },
         { value: 'flac', label: 'FLAC' },
+        { value: 'wav', label: 'WAV' },
       ],
       qualityOptions: [
         { value: '192', label: '192k' },
@@ -198,11 +289,13 @@ export default {
         { value: '320', label: '320k' },
       ],
       mdiAlertCircle,
-      mdiChevronDown,
-      mdiChevronUp,
+      mdiArrowLeft,
+      mdiChevronRight,
       mdiClose,
       mdiContentPaste,
+      mdiLink,
       mdiLoading,
+      mdiMagnify,
       mdiPause,
       mdiPlay,
       mdiPlus,
@@ -212,6 +305,9 @@ export default {
     };
   },
   computed: {
+    isUrl() {
+      return looksLikeYoutubeUrl(this.input);
+    },
     busy() {
       return this.submitting || (this.download && this.isActive);
     },
@@ -224,14 +320,50 @@ export default {
     canRetry() {
       return this.download && ['failed', 'cancelled'].includes(this.download.status);
     },
+    trimStart() {
+      return parseTime(this.trim.start);
+    },
+    trimEnd() {
+      return parseTime(this.trim.end);
+    },
+    trimError() {
+      if (Number.isNaN(this.trimStart) || Number.isNaN(this.trimEnd)) return 'Use times like 1:30 or 90.';
+      const duration = this.video?.duration;
+      if (this.trimEnd !== null && this.trimEnd <= (this.trimStart || 0)) return 'The end must be after the start.';
+      if (duration && (this.trimStart || 0) >= duration) return `The video is only ${formatDuration(duration)} long.`;
+      return '';
+    },
+    keptLength() {
+      if (this.trimError || !this.video?.duration || (this.trimStart === null && this.trimEnd === null)) return null;
+      return Math.min(this.trimEnd ?? this.video.duration, this.video.duration) - (this.trimStart || 0);
+    },
+    editSummary() {
+      const parts = [];
+      if (this.trimStart || this.trimEnd) parts.push(`${formatDuration(this.trimStart || 0)}–${this.trimEnd ? formatDuration(this.trimEnd) : 'end'}`);
+      if (this.removeSilence) parts.push('no silence');
+      return parts.join(' · ');
+    },
+    tagsSummary() {
+      return this.tags.artist ? `${this.tags.artist}${this.tags.year ? ` · ${this.tags.year}` : ''}` : '';
+    },
+  },
+  watch: {
+    // Opening a search from Home (?q=) or a link (?url=)
+    '$route.query': {
+      handler(query) {
+        if (query.url && query.url !== this.input) {
+          this.input = String(query.url);
+          this.fetchVideoInfo();
+        } else if (query.q && query.q !== this.input) {
+          this.input = String(query.q);
+          this.search();
+        }
+      },
+      immediate: true,
+    },
   },
   mounted() {
-    if (this.$route.query.url) {
-      this.url = String(this.$route.query.url);
-      this.fetchVideoInfo();
-    } else {
-      this.$refs.url?.focus();
-    }
+    if (!this.input) this.$refs.url?.focus();
   },
   beforeUnmount() {
     this.stopPolling();
@@ -241,52 +373,92 @@ export default {
     formatDuration,
     toggle,
 
-    onUrlInput() {
-      this.urlError = '';
-      this.video = null;
+    formatViews(views) {
+      return new Intl.NumberFormat(undefined, { notation: 'compact' }).format(views);
+    },
+
+    onInput() {
+      this.inputError = '';
       clearTimeout(this.debounceTimer);
-      if (this.url) this.debounceTimer = setTimeout(this.fetchVideoInfo, 700);
+      if (this.isUrl) {
+        this.video = null;
+        this.debounceTimer = setTimeout(this.fetchVideoInfo, 700);
+      }
+    },
+
+    submitInput() {
+      this.isUrl ? this.fetchVideoInfo() : this.search();
     },
 
     async paste() {
       try {
-        this.url = (await navigator.clipboard.readText()).trim();
-        this.onUrlInput();
+        this.input = (await navigator.clipboard.readText()).trim();
+        this.onInput();
       } catch {
         notify('Clipboard access was blocked. Paste with Ctrl+V instead.');
       }
     },
 
-    async fetchVideoInfo() {
-      clearTimeout(this.debounceTimer);
-      if (!this.url) return;
+    async search() {
+      if (this.input.length < 2) return;
+      this.searching = true;
+      this.inputError = '';
+      this.video = null;
+      this.results = [];
+      try {
+        const { data } = await searchAPI.search(this.input);
+        this.results = data.results;
+        if (!this.results.length) this.inputError = 'No videos found. Try other words.';
+      } catch (error) {
+        this.inputError = errorMessage(error, 'Search failed.');
+      } finally {
+        this.searching = false;
+      }
+    },
 
-      if (!YOUTUBE_URL.test(this.url)) {
-        this.urlError = 'This does not look like a YouTube link.';
+    choose(result) {
+      this.fetchVideoInfo(result.url);
+    },
+
+    backToResults() {
+      this.video = null;
+    },
+
+    async fetchVideoInfo(url = null) {
+      clearTimeout(this.debounceTimer);
+      const link = url || this.input;
+      if (!link) return;
+
+      if (!YOUTUBE_URL.test(link)) {
+        this.inputError = 'This does not look like a YouTube link.';
         return;
       }
-      if (/[?&]list=/.test(this.url) && !/[?&]v=|youtu\.be\/|\/shorts\//.test(this.url)) {
-        this.$router.push({ path: '/playlist', query: { url: this.url } });
+      if (/[?&]list=/.test(link) && !/[?&]v=|youtu\.be\/|\/shorts\//.test(link)) {
+        this.$router.push({ path: '/playlist', query: { url: link } });
         return;
       }
 
       // Ignore answers to older lookups if the link changed meanwhile
       const lookupId = ++this.lookupId;
       this.fetching = true;
-      this.urlError = '';
+      this.inputError = '';
 
       try {
-        const { data } = await downloadAPI.fetchInfo(this.url);
+        const { data } = await downloadAPI.fetchInfo(link);
         if (lookupId !== this.lookupId) return;
-        this.video = data.video;
+        this.video = { ...data.video, url: link };
         this.tags = {
-          title: data.video.title || '',
-          artist: data.video.artist || '',
+          title: data.suggested?.title || data.video.title || '',
+          artist: data.suggested?.artist || data.video.artist || '',
           album: data.video.album || '',
+          year: data.video.year || null,
+          genre: data.video.genre || '',
         };
+        this.trim = { start: '', end: '' };
+        this.removeSilence = false;
       } catch (error) {
         if (lookupId !== this.lookupId) return;
-        this.urlError = errorMessage(error, 'Could not load this video.');
+        this.inputError = errorMessage(error, 'Could not load this video.');
       } finally {
         if (lookupId === this.lookupId) this.fetching = false;
       }
@@ -296,13 +468,18 @@ export default {
       this.submitting = true;
       try {
         const { data } = await downloadAPI.create({
-          youtube_url: this.url,
+          youtube_url: this.video.url,
           format: this.format,
           quality: this.quality,
           title: this.tags.title || this.video.title,
           artist: this.tags.artist || null,
           album: this.tags.album || null,
+          year: this.tags.year || null,
+          genre: this.tags.genre || null,
           thumbnail_url: this.video.thumbnail,
+          trim_start: this.trimStart || null,
+          trim_end: this.trimEnd && this.trimEnd < (this.video.duration || Infinity) ? this.trimEnd : null,
+          remove_silence: this.removeSilence,
         });
         this.download = data.download;
         if (data.download.status === 'completed') {
@@ -367,13 +544,15 @@ export default {
       this.stopPolling();
       clearTimeout(this.debounceTimer);
       this.lookupId++;
-      this.url = '';
-      this.urlError = '';
+      this.input = '';
+      this.inputError = '';
+      this.results = [];
       this.video = null;
       this.fetching = false;
       this.download = null;
       this.showTags = false;
-      if (this.$route.query.url) this.$router.replace({ query: {} });
+      this.showEdit = false;
+      if (Object.keys(this.$route.query).length) this.$router.replace({ query: {} });
       this.$nextTick(() => this.$refs.url?.focus());
     },
   },

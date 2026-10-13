@@ -1,10 +1,11 @@
 # 🎵 YouTube to MP3 Converter (Self-Hosted)
-A  self-hosted application to download and convert YouTube videos to high-quality MP3/FLAC audio files. Built with **Laravel 13**, **Vue.js 3**, and **Tailwind CSS**.
+A  self-hosted application to download and convert YouTube videos to high-quality MP3, FLAC or WAV audio files. Built with **Laravel 13**, **Vue.js 3**, and **Tailwind CSS**.
 
 
 ## 📚 Table of Contents
 - [About](#about)
 - [Important Disclaimer & Terms of Use](#disclaimer)
+- [Run with Docker](#docker)
 - [Full Setup](#full-setup)
 - [Run the App](#run-the-app)
 - [Scheduler Setup](#scheduler-setup)
@@ -28,15 +29,18 @@ This project is a hobbyist experiment and is provided strictly for educational a
 In short: Use it, learn from it, and break it—but do so with caution!
 
 ## ✨ Features
-- **Single Video Download**: Convert individual YouTube or YouTube Music links.
+- **Search or paste**: Search YouTube by song name right in the app, or paste a video/YouTube Music link.
 - **Playlist Support**: Bulk import entire playlists with smart selection.
-- **High Quality**: Support for MP3 (up to 320kbps) and FLAC formats.
-- **Metadata Tagging**: Automatically embeds Title, Artist, Album, and Cover Art.
-- **Queue System**: Background processing with rate limiting to prevent IP bans.
-- **Real-time Dashboard**: Monitor disk usage, active downloads, and failed jobs.
-- **History**: Searchable archive of all your downloads.
-- **Settings**: Configure download paths, limits, and system checks directly from the UI.
-- **Responsive Design**: Beautiful dark-mode UI with glassmorphism effects.
+- **High Quality**: MP3 (up to 320 kbps), FLAC (lossless) and WAV (24-bit / 48 kHz).
+- **Trim & silence removal**: Keep only part of a video, and cut silent intros/outros.
+- **Clean titles & tags**: Removes "(Official Music Video)", "[HD]" and similar; tags title, artist, album, year, genre and cover art. Files are named after the title.
+- **Built-in player**: Play, seek, play all, shuffle, repeat, next/previous, media keys.
+- **Queue System**: Background processing with retries and rate limiting.
+- **Setup checklist**: First-run check of yt-dlp, FFmpeg, Deno, the queue worker and storage, with fix commands.
+- **One-click yt-dlp update** from the Settings page.
+- **Installable app (PWA)**: Install it on desktop or phone like a native app.
+- **Docker**: One command to run everything, tools included.
+- **Responsive Design**: Material-style light and dark themes for phone, tablet and desktop.
 
 ## 🛠️ Requirements
 - **OS**: Windows, Linux, or macOS
@@ -47,6 +51,22 @@ In short: Use it, learn from it, and break it—but do so with caution!
 - **System tools**:
   - `yt-dlp` (downloader)
   - `ffmpeg` (audio conversion)
+
+<a id="docker"></a>
+## 🐳 Run with Docker
+The easiest way: no PHP, Node, yt-dlp or FFmpeg to install. Requires [Docker](https://docs.docker.com/get-docker/).
+
+```bash
+git clone https://github.com/Abhijithsp/youtube_to_mp3_converter.git
+cd youtube_to_mp3_converter
+docker compose up -d
+```
+
+Open **http://localhost:8000**. Converted files appear in the `downloads/` folder next to `docker-compose.yml`; the database and settings live in `docker-data/`.
+
+- Use another port: `APP_PORT=9000 docker compose up -d`
+- Update to a newer version of the app: `git pull && docker compose up -d --build`
+- If YouTube asks to *confirm you're not a bot*: export a `cookies.txt` from your browser (e.g. with a "Get cookies.txt" extension), put it in `docker-data/`, and uncomment `YTDLP_COOKIES_FILE` in `docker-compose.yml`. Reading browser cookies directly does not work inside Docker.
 
 <a id="full-setup"></a>
 ## 🚀 Full Setup
@@ -207,6 +227,9 @@ npm run build
 3. Select format (`mp3` or `flac`) and quality.
 4. Start conversion and monitor queue/progress.
 5. Download completed file from the app.
+
+### 📲 Install as an app
+Open the app in Chrome, Edge or Brave and use the **Install app** button in the menu (or the install icon in the address bar). On Android use *Add to Home screen*, on iPhone *Share → Add to Home Screen*. Browsers only offer installing on `localhost` or HTTPS.
 
 <a id="testing"></a>
 ## 🧪 Running Tests

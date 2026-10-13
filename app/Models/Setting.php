@@ -24,6 +24,14 @@ class Setting extends Model
     }
 
     /**
+     * Strip "(Official Music Video)" and similar from new titles (Settings page, default on)
+     */
+    public static function cleanTitles(): bool
+    {
+        return filter_var(static::get('clean_titles', config('youtube-converter.clean_titles', true)), FILTER_VALIDATE_BOOL);
+    }
+
+    /**
      * Relative paths (e.g. YOUTUBE_DOWNLOAD_PATH=storage/app/downloads) would resolve
      * against the working directory, which is public/ for web requests but the
      * project root for the queue worker, so anchor them to the project root.

@@ -6,8 +6,11 @@ use App\Models\Setting;
 use App\Support\ProcessOutput;
 use Exception;
 use Illuminate\Contracts\Process\ProcessResult;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Process;
+use Symfony\Component\Process\ExecutableFinder;
 
 class YouTubeService
 {
@@ -170,8 +173,14 @@ class YouTubeService
             return [
                 'id' => $info['id'] ?? null,
                 'title' => $info['title'] ?? 'Unknown Title',
+                // "artist"/"track" only exist for YouTube Music releases
                 'artist' => $info['artist'] ?? $info['uploader'] ?? null,
+                'track' => $info['track'] ?? null,
+                'has_music_metadata' => isset($info['artist'], $info['track']),
+                'uploader' => $info['uploader'] ?? $info['channel'] ?? null,
                 'album' => $info['album'] ?? null,
+                'year' => $this->yearFrom($info),
+                'genre' => $info['genre'] ?? null,
                 'thumbnail' => $info['thumbnail'] ?? null,
                 'duration' => isset($info['duration']) ? (int) round($info['duration']) : null,
                 'url' => $url,
@@ -183,6 +192,49 @@ class YouTubeService
             ]);
             throw $e;
         }
+    }
+
+    private function yearFrom(array $info): ?int
+    {
+        foreach ([$info['release_year'] ?? null, $info['release_date'] ?? null, $info['upload_date'] ?? null] as $value) {
+            if ($value && preg_match('/^(\d{4})/', (string) $value, $m)) {
+                return (int) $m[1];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Search YouTube videos by text ("ytsearchN:" in yt-dlp, no API key needed)
+     */
+    public function search(string $query, int $limit = 12): array
+    {
+        $limit = max(1, min(30, $limit));
+
+        $result = $this->runYtDlp(['-J', '--flat-playlist', '--no-warnings', "ytsearch{$limit}:{$query}"], 60);
+
+        if (!$result->successful()) {
+            throw $this->failure('Search failed', $result);
+        }
+
+        $data = json_decode($result->output(), true);
+
+        return collect($data['entries'] ?? [])
+            // Skip channels, playlists and live streams; only regular videos can be converted
+            ->filter(fn ($entry) => !empty($entry['id']) && strlen($entry['id']) === 11
+                && !in_array($entry['live_status'] ?? null, ['is_live', 'is_upcoming'], true))
+            ->map(fn ($entry) => [
+                'id' => $entry['id'],
+                'title' => $entry['title'] ?? 'Untitled',
+                'url' => "https://www.youtube.com/watch?v={$entry['id']}",
+                'channel' => $entry['channel'] ?? $entry['uploader'] ?? null,
+                'duration' => isset($entry['duration']) ? (int) round($entry['duration']) : null,
+                'views' => $entry['view_count'] ?? null,
+                'thumbnail' => "https://i.ytimg.com/vi/{$entry['id']}/mqdefault.jpg",
+            ])
+            ->values()
+            ->all();
     }
 
     /**
@@ -330,6 +382,104 @@ class YouTubeService
         }
 
         return ['ok' => false, 'message' => $this->failure('YouTube check failed', $result)->getMessage(), 'cookies' => $cookies];
+    }
+
+    /**
+     * Newest yt-dlp release on GitHub (cached; null when offline)
+     */
+    public function latestYtDlpVersion(): ?string
+    {
+        return Cache::remember('yt-dlp-latest-version', now()->addHours(6), function () {
+            try {
+                $response = Http::timeout(8)
+                    ->withHeaders(['Accept' => 'application/vnd.github+json'])
+                    ->get('https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest');
+
+                return $response->successful() ? ltrim((string) $response->json('tag_name'), 'v') ?: null : null;
+            } catch (Exception $e) {
+                return null;
+            }
+        });
+    }
+
+    /**
+     * Update yt-dlp: its own updater first (official binaries), then winget when it was
+     * installed that way. pip/other package managers only get the command to run.
+     *
+     * @return array{ok: bool, updated: bool, version: string|null, message: string, output: string}
+     */
+    public function updateYtDlp(): array
+    {
+        $before = $this->getYtDlpVersion();
+
+        if ($before === null) {
+            return ['ok' => false, 'updated' => false, 'version' => null, 'message' => 'yt-dlp is not installed or not on PATH.', 'output' => ''];
+        }
+
+        $result = Process::env($this->getProcessEnv())->timeout(180)->run(['yt-dlp', '-U']);
+        $output = ProcessOutput::error($result, 8);
+        $combined = trim($result->output() . "\n" . $result->errorOutput());
+
+        // Self-update is refused for pip/package-manager installs
+        $managed = preg_match('/package manager|with pip|PyPi|Use that to update/i', $combined);
+        $pip = preg_match('/with pip|PyPi/i', $combined);
+
+        if ($managed && !$pip && $this->installedWithWinget()) {
+            try {
+                $winget = Process::timeout(300)->run([
+                    'winget', 'upgrade', '--id', 'yt-dlp.yt-dlp', '--exact', '--silent',
+                    '--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity',
+                ]);
+                $output = ProcessOutput::error($winget, 8);
+                $managed = false;
+                $result = $winget;
+            } catch (Exception $e) {
+                $output = $e->getMessage();
+            }
+        }
+
+        $after = $this->getYtDlpVersion();
+        $updated = $after !== null && $after !== $before;
+
+        if ($updated) {
+            Cache::forget('yt-dlp-latest-version');
+
+            return ['ok' => true, 'updated' => true, 'version' => $after, 'message' => "Updated yt-dlp from {$before} to {$after}.", 'output' => $output];
+        }
+
+        if ($managed) {
+            $hint = preg_match('/pip|PyPi/i', $combined) ? 'python -m pip install -U yt-dlp' : 'your package manager (e.g. winget upgrade yt-dlp, brew upgrade yt-dlp)';
+
+            return ['ok' => false, 'updated' => false, 'version' => $before, 'message' => "yt-dlp was installed with a package manager. Update it with {$hint}.", 'output' => $output];
+        }
+
+        if ($result->successful() || preg_match('/up to date|No update/i', $combined)) {
+            return ['ok' => true, 'updated' => false, 'version' => $before, 'message' => "yt-dlp {$before} is already the latest version.", 'output' => $output];
+        }
+
+        return ['ok' => false, 'updated' => false, 'version' => $before, 'message' => 'The update failed: ' . $output, 'output' => $output];
+    }
+
+    private function installedWithWinget(): bool
+    {
+        $path = (new ExecutableFinder())->find('yt-dlp');
+
+        return $path !== null && str_contains(strtolower($path), 'winget');
+    }
+
+    /**
+     * yt-dlp needs a JavaScript runtime (Deno by default) to solve YouTube's
+     * player challenges; without one some videos fail or lose formats.
+     */
+    public function getDenoVersion(): ?string
+    {
+        try {
+            $result = Process::timeout(20)->run(['deno', '--version']);
+        } catch (Exception $e) {
+            return null;
+        }
+
+        return $result->successful() && preg_match('/deno\s+([\d.]+)/i', $result->output(), $m) ? $m[1] : null;
     }
 
     /**

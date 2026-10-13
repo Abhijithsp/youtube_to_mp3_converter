@@ -51,6 +51,13 @@ export const downloadAPI = {
     },
 };
 
+// Search YouTube by text
+export const searchAPI = {
+    search(q) {
+        return api.get("/search", { params: { q } });
+    },
+};
+
 // Queue
 export const queueAPI = {
     // Get queue status
@@ -155,6 +162,18 @@ export const settingsAPI = {
 
   testYoutube() {
     return api.get('/settings/test-youtube');
+  },
+
+  ytDlpVersion() {
+    return api.get('/settings/yt-dlp');
+  },
+
+  updateYtDlp() {
+    return api.post('/settings/yt-dlp/update');
+  },
+
+  setupChecks(fresh = false) {
+    return api.get('/settings/setup-checks', { params: fresh ? { fresh: 1 } : {} });
   }
 };
 

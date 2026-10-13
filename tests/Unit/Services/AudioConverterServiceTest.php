@@ -105,6 +105,43 @@ class AudioConverterServiceTest extends TestCase
         $this->assertNull($this->service->parseProgress('size=N/A time=N/A bitrate=N/A'));
     }
 
+    public function test_wav_is_24_bit_48_khz_pcm(): void
+    {
+        $command = $this->service->buildCommand('in.webm', 'out.wav', 'wav', 320);
+
+        $this->assertContains('pcm_s24le', $command);
+        $this->assertSame('48000', $command[array_search('-ar', $command, true) + 1]);
+        $this->assertNotContains('-b:a', $command);
+    }
+
+    public function test_trimming_seeks_the_input(): void
+    {
+        $command = $this->service->buildCommand('in.webm', 'out.mp3', 'mp3', 320, ['trim_start' => 12, 'trim_end' => 95]);
+
+        $input = array_search('-i', $command, true);
+        $this->assertSame('12', $command[array_search('-ss', $command, true) + 1]);
+        $this->assertSame('95', $command[array_search('-to', $command, true) + 1]);
+        $this->assertLessThan($input, array_search('-ss', $command, true), '-ss must come before -i');
+
+        $untrimmed = $this->service->buildCommand('in.webm', 'out.mp3', 'mp3', 320, ['trim_start' => 0, 'trim_end' => null]);
+        $this->assertNotContains('-ss', $untrimmed);
+        $this->assertNotContains('-to', $untrimmed);
+    }
+
+    public function test_silence_removal_filters(): void
+    {
+        $song = $this->service->buildCommand('in', 'out.mp3', 'mp3', 320, ['remove_silence' => true, 'duration' => 240]);
+        $filter = $song[array_search('-af', $song, true) + 1];
+        // Leading and trailing silence (by reversing the audio)
+        $this->assertStringContainsString('areverse', $filter);
+
+        // Long mixes: only leading silence, reversing would need too much memory
+        $mix = $this->service->buildCommand('in', 'out.mp3', 'mp3', 320, ['remove_silence' => true, 'duration' => 3600]);
+        $this->assertStringNotContainsString('areverse', $mix[array_search('-af', $mix, true) + 1]);
+
+        $this->assertNotContains('-af', $this->service->buildCommand('in', 'out.mp3'));
+    }
+
     public function test_ffmpeg_version_detection(): void
     {
         Process::fake(['*' => "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026\n"]);

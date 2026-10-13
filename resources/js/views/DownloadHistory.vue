@@ -1,6 +1,10 @@
 <template>
   <div class="mx-auto max-w-4xl">
     <PageHeader title="History" :subtitle="total ? `${total} finished download${total === 1 ? '' : 's'}` : 'Finished downloads'">
+      <button v-if="total" type="button" class="btn btn-filled btn-sm" :disabled="startingAll" @click="playEverything">
+        <AppIcon :path="mdiPlay" :size="18" />
+        Play all
+      </button>
       <button v-if="total" type="button" class="btn btn-text btn-sm text-danger" @click="clearHistory">
         <AppIcon :path="mdiDeleteSweepOutline" :size="18" />
         Clear
@@ -57,7 +61,7 @@
               :class="isPlaying(d) && '!text-primary'"
               :title="isPlaying(d) ? 'Pause' : 'Play'"
               :aria-label="isPlaying(d) ? 'Pause' : 'Play'"
-              @click="toggle(d)"
+              @click="toggle(d, downloads)"
             >
               <AppIcon :path="isPlaying(d) ? mdiPauseCircle : mdiPlayCircleOutline" />
             </button>
@@ -91,6 +95,7 @@ import {
   mdiDeleteOutline,
   mdiDeleteSweepOutline,
   mdiHistory,
+  mdiPlay,
   mdiLoading,
   mdiMagnify,
   mdiMagnifyClose,
@@ -103,7 +108,7 @@ import DownloadRow from '../components/DownloadRow.vue';
 import EmptyState from '../components/EmptyState.vue';
 import PageHeader from '../components/PageHeader.vue';
 import { downloadAPI, historyAPI } from '../services/api';
-import { forget, isCurrent, player, stop, toggle } from '../player';
+import { forget, isCurrent, player, playAll, stop, toggle } from '../player';
 import { confirmDialog, errorMessage, notify } from '../ui';
 
 export default {
@@ -121,11 +126,13 @@ export default {
       total: 0,
       searchTimer: null,
       player,
+      startingAll: false,
       mdiChevronLeft,
       mdiChevronRight,
       mdiDeleteOutline,
       mdiDeleteSweepOutline,
       mdiHistory,
+      mdiPlay,
       mdiLoading,
       mdiMagnify,
       mdiMagnifyClose,
@@ -170,6 +177,26 @@ export default {
     },
 
     toggle,
+
+    /** Play everything matching the current search/filter, not just this page */
+    async playEverything() {
+      this.startingAll = true;
+      const [sortBy, sortDir] = this.sort.split(':');
+      try {
+        const { data } = await historyAPI.getAll({
+          search: this.search || undefined,
+          format: this.format || undefined,
+          sort_by: sortBy,
+          sort_dir: sortDir,
+          per_page: 100,
+        });
+        playAll(data.data);
+      } catch (error) {
+        notify(errorMessage(error, 'Could not load the songs'), 'error');
+      } finally {
+        this.startingAll = false;
+      }
+    },
 
     isPlaying(download) {
       return isCurrent(download) && player.playing;

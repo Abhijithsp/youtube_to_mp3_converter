@@ -32,6 +32,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Clean Titles
+    |--------------------------------------------------------------------------
+    |
+    | Remove noise such as "(Official Music Video)", "[HD]" or "| Lyrics" from
+    | video titles, which are also used as file names. Can be changed on the
+    | Settings page.
+    |
+    */
+    'clean_titles' => env('CLEAN_TITLES', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | Max Playlist Size
     |--------------------------------------------------------------------------
     |

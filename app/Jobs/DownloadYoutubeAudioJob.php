@@ -18,6 +18,7 @@ use App\Exceptions\InsufficientDiskSpaceException;
 use App\Exceptions\YouTubeDownloadException;
 use App\Exceptions\AudioConversionException;
 use App\Support\FileName;
+use App\Support\TrackTitle;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Exception;
@@ -79,12 +80,16 @@ class DownloadYoutubeAudioJob implements ShouldQueue
             // (and the UI sends a title), but duration/thumbnail/artist come only from yt-dlp.
             if ($this->needsVideoInfo()) {
                 $videoInfo = $youtubeService->extractVideoInfo($this->download->youtube_url);
+                // Titles the user (or the UI's suggestion) set are kept as they are
+                $suggested = TrackTitle::suggest($videoInfo, Setting::cleanTitles());
 
                 $this->download->update(array_filter([
                     'youtube_id' => $this->download->youtube_id ?: $videoInfo['id'],
-                    'title' => $this->hasRealTitle() ? $this->download->title : $videoInfo['title'],
-                    'artist' => $this->download->artist ?: $videoInfo['artist'],
+                    'title' => $this->hasRealTitle() ? $this->download->title : $suggested['title'],
+                    'artist' => $this->download->artist ?: $suggested['artist'],
                     'album' => $this->download->album ?: $videoInfo['album'],
+                    'year' => $this->download->year ?: $videoInfo['year'],
+                    'genre' => $this->download->genre ?: $videoInfo['genre'],
                     'thumbnail_url' => $this->download->thumbnail_url ?: $videoInfo['thumbnail'],
                     'duration' => $videoInfo['duration'] ? (int) $videoInfo['duration'] : null,
                 ], fn ($value) => $value !== null && $value !== ''));
@@ -96,8 +101,12 @@ class DownloadYoutubeAudioJob implements ShouldQueue
             $estimatedMb = $this->download->duration
                 ? $diskSpaceService->estimateFileSize(
                     $this->download->duration,
-                    // FLAC is lossless; ~1000kbps is a safe upper estimate
-                    $this->download->format === 'flac' ? 1000 : (int) $this->download->quality
+                    // Lossless formats: ~1000kbps (FLAC) and 2304kbps (24-bit/48kHz WAV) upper estimates
+                    match ($this->download->format) {
+                        'flac' => 1000,
+                        'wav' => 2304,
+                        default => (int) $this->download->quality,
+                    }
                 )
                 : 0;
 
@@ -202,15 +211,19 @@ class DownloadYoutubeAudioJob implements ShouldQueue
 
             $this->download->updateProgress(60);
 
-            // Step 6: Convert if necessary (yt-dlp downloads the raw audio stream, e.g. webm/m4a)
-            $needsConversion = pathinfo($downloadedFile, PATHINFO_EXTENSION) !== $this->download->format;
+            // Step 6: Convert if necessary (yt-dlp downloads the raw audio stream, e.g. webm/m4a).
+            // Trimming or silence removal always needs a re-encode.
+            $editOptions = $this->editOptions();
+            $isEdited = $editOptions['trim_start'] || $editOptions['trim_end'] || $editOptions['remove_silence'];
+            $needsConversion = $isEdited || pathinfo($downloadedFile, PATHINFO_EXTENSION) !== $this->download->format;
 
             if ($needsConversion) {
-                Log::info('Converting audio format');
+                Log::info('Converting audio format', $editOptions);
 
                 $this->download->update(['status_text' => "Converting to {$this->download->format}..."]);
 
-                $duration = $this->download->duration ?: 1; // avoid division by zero
+                // Progress is measured against the length of the part being kept
+                $duration = max(1, ($editOptions['trim_end'] ?: ($this->download->duration ?: 1)) - $editOptions['trim_start']);
                 $lastConversionProgress = 0;
 
                 try {
@@ -242,11 +255,24 @@ class DownloadYoutubeAudioJob implements ShouldQueue
                                     $lastConversionProgress = $intPercent;
                                 }
                             }
-                        }
+                        },
+                        $editOptions + ['duration' => $this->download->duration]
                     );
 
                     // Remove temp file after conversion
                     @unlink($downloadedFile);
+
+                    // Trimming/silence removal changes the length: store the real one
+                    if ($isEdited) {
+                        try {
+                            $actual = $audioConverter->getAudioInfo($finalFile)['duration'];
+                            if ($actual > 0) {
+                                $this->download->update(['duration' => $actual]);
+                            }
+                        } catch (Exception $e) {
+                            // ffprobe is optional; keep the original duration
+                        }
+                    }
                 } catch (DownloadCancelledException $e) {
                     throw $e;
                 } catch (Exception $e) {
@@ -272,15 +298,18 @@ class DownloadYoutubeAudioJob implements ShouldQueue
 
             try {
                 $metadata = [
-                    'title' => $this->download->title,
+                    // "D-Sturb - LADY" by "D-Sturb" is tagged as "LADY"
+                    'title' => TrackTitle::songTitle($this->download->title, $this->download->artist),
                     'artist' => $this->download->artist,
                     'album' => $this->download->album,
+                    'year' => $this->download->year,
+                    'genre' => $this->download->genre,
                 ];
 
                 $metadataService->tagFile($finalFile, $metadata);
 
-                // Download and attach thumbnail if available
-                if ($this->download->thumbnail_url) {
+                // Download and attach thumbnail if available (WAV cannot hold cover art)
+                if ($this->download->thumbnail_url && $this->download->format !== 'wav') {
                     $thumbnailPath = $tempFile . '_thumb';
 
                     if ($metadataService->downloadThumbnail($this->download->thumbnail_url, $thumbnailPath)) {
@@ -380,6 +409,21 @@ class DownloadYoutubeAudioJob implements ShouldQueue
         if ($this->download->isCancelled()) {
             throw new DownloadCancelledException("Download {$this->download->id} was cancelled");
         }
+    }
+
+    /**
+     * Trim / silence options for the converter
+     */
+    private function editOptions(): array
+    {
+        $start = (int) ($this->download->trim_start ?? 0);
+        $end = $this->download->trim_end ? (int) $this->download->trim_end : 0;
+
+        return [
+            'trim_start' => $start,
+            'trim_end' => $end > $start ? $end : 0,
+            'remove_silence' => (bool) $this->download->remove_silence,
+        ];
     }
 
     private function needsVideoInfo(): bool

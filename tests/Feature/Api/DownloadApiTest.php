@@ -55,7 +55,7 @@ class DownloadApiTest extends TestCase
 
     public function test_store_validates_input(): void
     {
-        $this->postJson('/api/downloads', ['youtube_url' => 'nope', 'format' => 'wav', 'quality' => 128])
+        $this->postJson('/api/downloads', ['youtube_url' => 'nope', 'format' => 'ogg', 'quality' => 128])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['youtube_url', 'format', 'quality']);
 

@@ -16,40 +16,69 @@ class AudioConverterService
     public const PROGRESS_PATTERN = '/size=\s*(\d+)\s*(?:kB|KiB)\s+time=(\d+:\d+:\d+(?:\.\d+)?)/';
 
     /**
+     * Longest audio (seconds) for which trailing silence is also removed; that filter
+     * reverses the audio in memory, which is too heavy for hour-long mixes.
+     */
+    private const TRAILING_SILENCE_MAX_SECONDS = 1200;
+
+    /**
+     * Build the ffmpeg command for a conversion.
+     *
+     * Options: trim_start / trim_end (seconds), remove_silence (bool),
+     * duration (seconds, used to decide on trailing-silence removal).
+     */
+    public function buildCommand(string $inputPath, string $outputPath, string $format = 'mp3', int $quality = 320, array $options = []): array
+    {
+        $bitrate = [192 => '192k', 256 => '256k', 320 => '320k'][$quality] ?? '320k';
+
+        $command = ['ffmpeg', '-y'];
+
+        // Input seeking: fast, and exact because the audio is re-encoded
+        $start = (int) ($options['trim_start'] ?? 0);
+        $end = isset($options['trim_end']) ? (int) $options['trim_end'] : null;
+        if ($start > 0) {
+            $command = [...$command, '-ss', (string) $start];
+        }
+        if ($end !== null && $end > $start) {
+            $command = [...$command, '-to', (string) $end];
+        }
+
+        // Commands are passed as arrays so arguments are never re-parsed by a shell:
+        // paths/titles with spaces stay intact and no PATH lookup through cmd.exe is needed.
+        $command = [...$command, '-i', $inputPath, '-vn', '-ac', '2'];
+
+        if (!empty($options['remove_silence'])) {
+            $silence = 'silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.2';
+            $duration = (int) ($options['duration'] ?? 0);
+            $filter = $duration > 0 && $duration <= self::TRAILING_SILENCE_MAX_SECONDS
+                ? "{$silence},areverse,{$silence},areverse"
+                : $silence;
+            $command = [...$command, '-af', $filter];
+        }
+
+        $command = [...$command, ...match ($format) {
+            'flac' => ['-ar', '44100', '-c:a', 'flac', '-compression_level', '8'],
+            // Studio-quality WAV: 24-bit PCM at 48 kHz, YouTube's native sample rate (no resampling)
+            'wav' => ['-ar', '48000', '-c:a', 'pcm_s24le'],
+            default => ['-ar', '44100', '-c:a', 'libmp3lame', '-b:a', $bitrate],
+        }];
+
+        $command[] = $outputPath;
+
+        return $command;
+    }
+
+    /**
      * Convert audio file to specified format and quality
      */
-    public function convert(string $inputPath, string $outputPath, string $format = 'mp3', int $quality = 320, ?callable $progressCallback = null): bool
+    public function convert(string $inputPath, string $outputPath, string $format = 'mp3', int $quality = 320, ?callable $progressCallback = null, array $options = []): bool
     {
         try {
             if (!file_exists($inputPath)) {
                 throw new Exception("Input file does not exist: {$inputPath}");
             }
 
-            $bitrateMap = [
-                192 => '192k',
-                256 => '256k',
-                320 => '320k',
-            ];
-
-            $bitrate = $bitrateMap[$quality] ?? '320k';
-
-            $codecMap = [
-                'mp3' => 'libmp3lame',
-                'flac' => 'flac',
-            ];
-
-            $codec = $codecMap[$format] ?? 'libmp3lame';
-
-            // Commands are passed as arrays so arguments are never re-parsed by a shell:
-            // paths/titles with spaces stay intact and no PATH lookup through cmd.exe is needed.
-            $command = ['ffmpeg', '-y', '-i', $inputPath, '-vn', '-ar', '44100', '-ac', '2', '-c:a', $codec];
-
-            // Bitrate only applies to lossy codecs; FLAC is lossless
-            if ($format !== 'flac') {
-                $command = [...$command, '-b:a', $bitrate];
-            }
-
-            $command[] = $outputPath;
+            $command = $this->buildCommand($inputPath, $outputPath, $format, $quality, $options);
 
             if ($progressCallback) {
                 $result = Process::timeout(600)->run($command, function (string $type, string $output) use ($progressCallback) {

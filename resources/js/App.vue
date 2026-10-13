@@ -38,6 +38,17 @@
 
       <div class="flex flex-col items-center gap-1 px-3 pb-4 lg:items-stretch">
         <button
+          v-if="ui.installPrompt"
+          type="button"
+          class="flex items-center justify-center gap-3 rounded-xl py-2.5 text-sm font-medium text-primary hover:bg-surface-2 lg:justify-start lg:px-3"
+          aria-label="Install app"
+          title="Install as an app"
+          @click="installApp"
+        >
+          <AppIcon :path="mdiMonitorArrowDown" :size="22" />
+          <span class="hidden lg:inline">Install app</span>
+        </button>
+        <button
           type="button"
           class="flex items-center justify-center gap-3 rounded-xl py-2.5 text-sm font-medium text-fg-muted hover:bg-surface-2 hover:text-fg lg:justify-start lg:px-3"
           :aria-label="themeLabel"
@@ -60,6 +71,9 @@
           <span class="text-[0.9375rem] font-semibold text-fg">YouTube to MP3</span>
         </router-link>
         <div class="ml-auto flex items-center">
+          <button v-if="ui.installPrompt" type="button" class="icon-btn !text-primary" aria-label="Install app" @click="installApp">
+            <AppIcon :path="mdiCellphoneArrowDown" />
+          </button>
           <button type="button" class="icon-btn" :aria-label="themeLabel" @click="toggleTheme">
             <AppIcon :path="ui.theme === 'dark' ? mdiWeatherSunny : mdiWeatherNight" />
           </button>
@@ -125,6 +139,8 @@ import {
   mdiPlaylistMusicOutline,
   mdiTrayArrowDown,
   mdiTrayFull,
+  mdiCellphoneArrowDown,
+  mdiMonitorArrowDown,
   mdiWeatherNight,
   mdiWeatherSunny,
 } from '@mdi/js';
@@ -135,7 +151,7 @@ import SnackbarHost from './components/SnackbarHost.vue';
 import WorkerBanner from './components/WorkerBanner.vue';
 import { player } from './player';
 import { queueAPI } from './services/api';
-import { toggleTheme, ui } from './ui';
+import { installApp, toggleTheme, ui } from './ui';
 
 const NAV = [
   { to: '/', label: 'Home', icon: mdiHomeOutline, iconActive: mdiHome },
@@ -161,6 +177,8 @@ export default {
       mdiCog,
       mdiCogOutline,
       mdiMusicNote,
+      mdiCellphoneArrowDown,
+      mdiMonitorArrowDown,
       mdiWeatherNight,
       mdiWeatherSunny,
     };
@@ -178,6 +196,7 @@ export default {
     clearInterval(this.timer);
   },
   methods: {
+    installApp,
     toggleTheme,
     isActive(item) {
       return item.to === '/' ? this.$route.path === '/' : this.$route.path.startsWith(item.to);

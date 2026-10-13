@@ -5,10 +5,14 @@ namespace App\Http\Controllers;
 use App\Models\Download;
 use App\Jobs\DownloadYoutubeAudioJob;
 use App\Services\YouTubeService;
+use App\Models\Setting;
 use App\Support\FileName;
+use App\Support\TrackTitle;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class DownloadController extends Controller
@@ -51,11 +55,24 @@ class DownloadController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'youtube_url' => 'required|url',
-            'format' => 'required|in:mp3,flac',
+            'format' => ['required', Rule::in(Download::FORMATS)],
             'quality' => 'required|in:192,256,320',
+            'title' => 'nullable|string|max:255',
             'artist' => 'nullable|string|max:255',
             'album' => 'nullable|string|max:255',
+            'year' => 'nullable|integer|min:1900|max:2100',
+            'genre' => 'nullable|string|max:100',
+            // Optional cut, in seconds
+            'trim_start' => 'nullable|integer|min:0',
+            'trim_end' => 'nullable|integer|min:1',
+            'remove_silence' => 'nullable|boolean',
         ]);
+
+        $validator->after(function ($validator) use ($request) {
+            if ($request->filled('trim_end') && (int) $request->trim_end <= (int) $request->trim_start) {
+                $validator->errors()->add('trim_end', 'The end time must be after the start time.');
+            }
+        });
 
         if ($validator->fails()) {
             return response()->json([
@@ -83,11 +100,17 @@ class DownloadController extends Controller
                 ], 422);
             }
 
-            // Reuse an earlier download only if it has the same format/quality and its file still exists
-            $existing = Download::where('youtube_id', $videoId)
+            $edited = $request->filled('trim_start') || $request->filled('trim_end') || $request->boolean('remove_silence');
+
+            // Reuse an earlier download only if it has the same format/quality, was not
+            // trimmed, and its file still exists. Edited downloads are always made fresh.
+            $existing = $edited ? null : Download::where('youtube_id', $videoId)
                 ->where('status', 'completed')
                 ->where('format', $request->format)
                 ->where('quality', (string) $request->quality)
+                ->whereNull('trim_start')
+                ->whereNull('trim_end')
+                ->where('remove_silence', false)
                 ->latest()
                 ->get()
                 ->first(fn (Download $download) => $download->file_path && file_exists($download->file_path));
@@ -110,6 +133,11 @@ class DownloadController extends Controller
                 'quality' => (string) $request->quality,
                 'artist' => $request->artist,
                 'album' => $request->album,
+                'year' => $request->year,
+                'genre' => $request->genre,
+                'trim_start' => $request->filled('trim_start') && (int) $request->trim_start > 0 ? (int) $request->trim_start : null,
+                'trim_end' => $request->filled('trim_end') ? (int) $request->trim_end : null,
+                'remove_silence' => $request->boolean('remove_silence'),
                 'status' => 'pending',
             ]);
 
@@ -127,6 +155,27 @@ class DownloadController extends Controller
                 'success' => false,
                 'message' => 'Failed to start download: ' . $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Search YouTube by text
+     */
+    public function search(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'q' => 'required|string|min:2|max:200',
+        ]);
+
+        $query = trim($data['q']);
+
+        try {
+            // Each search is a YouTube request: reuse recent answers to avoid rate limits
+            $results = Cache::remember('yt-search:' . sha1(mb_strtolower($query)), now()->addMinutes(30), fn () => $this->youtubeService->search($query));
+
+            return response()->json(['results' => $results]);
+        } catch (\Exception $e) {
+            return response()->json(['message' => $e->getMessage(), 'results' => []], 502);
         }
     }
 
@@ -160,7 +209,9 @@ class DownloadController extends Controller
 
             return response()->json([
                 'success' => true,
-                'video' => $videoInfo
+                'video' => $videoInfo,
+                // Cleaned title and artist to pre-fill the tag fields
+                'suggested' => TrackTitle::suggest($videoInfo, Setting::cleanTitles()),
             ]);
 
         } catch (\Exception $e) {
@@ -297,6 +348,7 @@ class DownloadController extends Controller
         $mimeTypes = [
             'mp3' => 'audio/mpeg',
             'flac' => 'audio/flac',
+            'wav' => 'audio/wav',
         ];
 
         // BinaryFileResponse supports HTTP range requests, so players can seek

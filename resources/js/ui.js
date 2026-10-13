@@ -7,7 +7,16 @@ export const ui = reactive({
     snackbar: null, // { id, message, type }
     dialog: null, // { title, message, confirmLabel, danger, checkbox, checked, resolve }
     theme: document.documentElement.dataset.theme || 'light',
+    installPrompt: null, // set when the browser allows installing the app
 });
+
+export async function installApp() {
+    const prompt = ui.installPrompt;
+    if (!prompt) return;
+    prompt.prompt();
+    const { outcome } = await prompt.userChoice;
+    if (outcome === 'accepted') ui.installPrompt = null;
+}
 
 let snackbarTimer = null;
 
@@ -49,6 +58,23 @@ export function toggleTheme() {
     }
 }
 
+/** localStorage that never throws (private mode, blocked storage) */
+export function readStorage(key) {
+    try {
+        return localStorage.getItem(key);
+    } catch (e) {
+        return null;
+    }
+}
+
+export function writeStorage(key, value) {
+    try {
+        localStorage.setItem(key, value);
+    } catch (e) {
+        // Not critical: the preference lasts for this visit only
+    }
+}
+
 /** Best error message from an axios error */
 export function errorMessage(error, fallback = 'Something went wrong') {
     const data = error?.response?.data;
@@ -74,6 +100,16 @@ export function formatDuration(seconds) {
     return h ? `${h}:${m.toString().padStart(2, '0')}:${s}` : `${m}:${s}`;
 }
 
+/**
+ * "1:30" / "1:02:03" / "90" → seconds. Empty → null, invalid → NaN.
+ */
+export function parseTime(value) {
+    const text = String(value ?? '').trim();
+    if (!text) return null;
+    if (!/^\d+(:\d{1,2}){0,2}$/.test(text)) return NaN;
+    return text.split(':').reduce((total, part) => total * 60 + Number(part), 0);
+}
+
 const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 
 export function formatRelative(value) {
@@ -88,4 +124,9 @@ export function formatRelative(value) {
     return date.toLocaleDateString();
 }
 
-export const YOUTUBE_URL = /^(https?:\/\/)?(www\.|m\.)?(youtube\.com|youtu\.be|music\.youtube\.com)\/.+$/;
+/** True for anything that is meant as a YouTube link (vs. search words) */
+export function looksLikeYoutubeUrl(text) {
+    return /^(https?:\/\/)?((www|m|music)\.)?(youtube\.com|youtu\.be)\//i.test(String(text ?? '').trim());
+}
+
+export const YOUTUBE_URL =/^(https?:\/\/)?(www\.|m\.)?(youtube\.com|youtu\.be|music\.youtube\.com)\/.+$/;

@@ -4,7 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>YouTube to MP3 Converter</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%232f5dd3'/%3E%3Cpath fill='white' d='M15 5v8.6a3 3 0 1 1-2-2.8V7h-3V5h5z'/%3E%3C/svg%3E">
+    <meta name="description" content="Convert YouTube videos to MP3, FLAC or WAV with tags and cover art.">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#e9edf5" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#101217" media="(prefers-color-scheme: dark)">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="YT to MP3">
     <script>
         // Apply the saved/system theme before first paint to avoid a flash
         (function () {

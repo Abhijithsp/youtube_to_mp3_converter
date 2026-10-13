@@ -21,6 +21,13 @@ class Download extends Model
      */
     public const FINAL_STATUSES = ['completed', 'failed', 'cancelled'];
 
+    /**
+     * Output formats; bitrate only applies to the lossy ones
+     */
+    public const FORMATS = ['mp3', 'flac', 'wav'];
+
+    public const LOSSLESS_FORMATS = ['flac', 'wav'];
+
     protected $fillable = [
         'user_id',
         'youtube_url',
@@ -28,9 +35,14 @@ class Download extends Model
         'title',
         'artist',
         'album',
+        'year',
+        'genre',
         'thumbnail_url',
         'format',
         'quality',
+        'trim_start',
+        'trim_end',
+        'remove_silence',
         'file_path',
         'file_size',
         'original_file_size',
@@ -52,6 +64,10 @@ class Download extends Model
         'duration' => 'integer',
         'progress' => 'integer',
         'conversion_progress' => 'integer',
+        'trim_start' => 'integer',
+        'trim_end' => 'integer',
+        'remove_silence' => 'boolean',
+        'year' => 'integer',
         'completed_at' => 'datetime',
     ];
 

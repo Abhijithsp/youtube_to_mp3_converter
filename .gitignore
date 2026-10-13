@@ -22,3 +22,7 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Docker volumes (docker compose up)
+/docker-data
+/downloads
