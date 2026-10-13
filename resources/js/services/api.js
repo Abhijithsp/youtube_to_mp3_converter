@@ -30,6 +30,16 @@ export const downloadAPI = {
         return api.post("/downloads", data);
     },
 
+    // Queue several links at once: { urls: [...], format, quality }
+    bulk(data) {
+        return api.post("/downloads/bulk", data);
+    },
+
+    // Edit tags of a finished download (re-tags and renames the file)
+    update(id, data) {
+        return api.patch(`/downloads/${id}`, data);
+    },
+
     // Delete download
     delete(id) {
         return api.delete(`/downloads/${id}`);

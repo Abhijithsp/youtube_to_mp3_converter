@@ -1,5 +1,5 @@
 <template>
-  <div class="seg" role="group" :aria-label="label">
+  <div class="seg" :class="compact && 'seg-compact'" role="group" :aria-label="label">
     <button
       v-for="option in options"
       :key="option.value"
@@ -8,7 +8,7 @@
       :disabled="disabled || option.disabled"
       @click="$emit('update:modelValue', option.value)"
     >
-      <AppIcon v-if="String(option.value) === String(modelValue)" :path="mdiCheck" :size="16" />
+      <AppIcon v-if="!compact && String(option.value) === String(modelValue)" :path="mdiCheck" :size="16" />
       {{ option.label }}
     </button>
   </div>
@@ -26,6 +26,8 @@ export default {
     options: { type: Array, required: true }, // [{ value, label, disabled? }]
     label: { type: String, default: '' },
     disabled: { type: Boolean, default: false },
+    // Small, content-width version without the check mark
+    compact: { type: Boolean, default: false },
   },
   emits: ['update:modelValue'],
   data() {

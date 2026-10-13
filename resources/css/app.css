@@ -344,9 +344,21 @@ body {
         border-radius: 999px;
         font-size: 0.8125rem;
         font-weight: 500;
+        white-space: nowrap;
         color: var(--md-fg-muted);
         transition: background-color 0.15s, color 0.15s, box-shadow 0.15s;
         cursor: pointer;
+    }
+    /* Small, content-width variant (e.g. a mode switch in a page header) */
+    .seg-compact {
+        width: auto;
+        flex-shrink: 0;
+    }
+    .seg-compact button {
+        flex: none;
+        height: 1.875rem;
+        padding: 0 0.875rem;
+        font-size: 0.75rem;
     }
     .seg button:not(:disabled):hover {
         color: var(--md-fg);
