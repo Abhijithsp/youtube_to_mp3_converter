@@ -151,6 +151,10 @@ export const settingsAPI = {
   
   testDependencies() {
     return api.get('/settings/test-dependencies');
+  },
+
+  testYoutube() {
+    return api.get('/settings/test-youtube');
   }
 };
 

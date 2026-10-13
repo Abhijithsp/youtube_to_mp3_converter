@@ -13,10 +13,10 @@ class SettingsSeeder extends Seeder
      */
     public function run(): void
     {
+        // download_path and the YouTube cookie options are left out on purpose so
+        // they follow .env until changed on the Settings page
         $settings = [
-            ['key' => 'download_path', 'value' => storage_path('app/downloads')],
             ['key' => 'max_playlist_size', 'value' => '50'],
-            ['key' => 'max_concurrent_downloads', 'value' => '3'],
             ['key' => 'rate_limit_seconds', 'value' => '2'],
             ['key' => 'min_disk_space_mb', 'value' => '500'],
         ];

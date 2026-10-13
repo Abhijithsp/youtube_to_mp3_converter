@@ -2,10 +2,25 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class Download extends Model
 {
+    /** @use HasFactory<\Database\Factories\DownloadFactory> */
+    use HasFactory;
+
+    /**
+     * Placeholder title used until yt-dlp metadata has been fetched.
+     */
+    public const PLACEHOLDER_TITLE = 'Fetching...';
+
+    /**
+     * Statuses after which no job will touch the download again.
+     */
+    public const FINAL_STATUSES = ['completed', 'failed', 'cancelled'];
+
     protected $fillable = [
         'user_id',
         'youtube_url',
@@ -25,9 +40,10 @@ class Download extends Model
         'error_message',
         'progress',
         'conversion_progress',
-        'download_url',
         'completed_at',
     ];
+
+    protected $appends = ['download_url'];
 
     protected $casts = [
         'quality' => 'string',
@@ -38,6 +54,19 @@ class Download extends Model
         'conversion_progress' => 'integer',
         'completed_at' => 'datetime',
     ];
+
+    /**
+     * Link to the stream endpoint, available once the file exists. Computed rather than
+     * read from the column so it always matches the current route and host.
+     */
+    protected function downloadUrl(): Attribute
+    {
+        return Attribute::get(
+            fn () => $this->status === 'completed' && $this->file_path && $this->exists
+                ? route('downloads.stream', $this)
+                : null
+        );
+    }
 
     // Relationships
     public function user()
@@ -99,5 +128,23 @@ class Download extends Model
     public function updateProgress($progress)
     {
         $this->update(['progress' => min(100, max(0, $progress))]);
+    }
+
+    /**
+     * Fresh check against the database (the user may cancel or delete while a job runs)
+     */
+    public function isCancelled(): bool
+    {
+        $status = static::whereKey($this->getKey())->value('status');
+
+        return $status === null || $status === 'cancelled';
+    }
+
+    /**
+     * Update the parent playlist's counters, if this download belongs to one
+     */
+    public function syncPlaylistProgress(): void
+    {
+        $this->playlistItem()->first()?->playlist?->syncProgress();
     }
 }

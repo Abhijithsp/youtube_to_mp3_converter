@@ -2,12 +2,19 @@
 
 namespace App\Services;
 
+use App\Support\ProcessOutput;
 use Exception;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Process;
 
 class AudioConverterService
 {
+    /**
+     * Matches ffmpeg progress lines, e.g. "size=    1280kB time=00:00:10.00"
+     * (older builds) or "size=      72KiB time=00:00:03.00" (ffmpeg 6+).
+     */
+    public const PROGRESS_PATTERN = '/size=\s*(\d+)\s*(?:kB|KiB)\s+time=(\d+:\d+:\d+(?:\.\d+)?)/';
+
     /**
      * Convert audio file to specified format and quality
      */
@@ -33,21 +40,21 @@ class AudioConverterService
 
             $codec = $codecMap[$format] ?? 'libmp3lame';
 
-            $command = sprintf(
-                'ffmpeg -i "%s" -vn -ar 44100 -ac 2 -b:a %s -c:a %s "%s" -y',
-                escapeshellarg($inputPath),
-                $bitrate,
-                $codec,
-                escapeshellarg($outputPath)
-            );
+            // Commands are passed as arrays so arguments are never re-parsed by a shell:
+            // paths/titles with spaces stay intact and no PATH lookup through cmd.exe is needed.
+            $command = ['ffmpeg', '-y', '-i', $inputPath, '-vn', '-ar', '44100', '-ac', '2', '-c:a', $codec];
+
+            // Bitrate only applies to lossy codecs; FLAC is lossless
+            if ($format !== 'flac') {
+                $command = [...$command, '-b:a', $bitrate];
+            }
+
+            $command[] = $outputPath;
 
             if ($progressCallback) {
                 $result = Process::timeout(600)->run($command, function (string $type, string $output) use ($progressCallback) {
-                    // Match size=  1280kB time=00:00:10.00
-                    if (preg_match_all('/size=\s*(\d+)kB\s+time=([\d:]+\.\d+)/', $output, $matches)) {
-                        $lastSizeKb = end($matches[1]);
-                        $lastTime = end($matches[2]);
-                        $progressCallback((int) $lastSizeKb, $lastTime);
+                    if ($progress = $this->parseProgress($output)) {
+                        $progressCallback(...$progress);
                     }
                 });
             } else {
@@ -55,7 +62,7 @@ class AudioConverterService
             }
 
             if (!$result->successful()) {
-                throw new Exception('Conversion failed: ' . $result->errorOutput());
+                throw new Exception('Conversion failed: ' . ProcessOutput::error($result));
             }
 
             if (!file_exists($outputPath)) {
@@ -76,6 +83,18 @@ class AudioConverterService
     }
 
     /**
+     * Read the latest [sizeKb, "HH:MM:SS.ss"] pair from an ffmpeg output chunk
+     */
+    public function parseProgress(string $output): ?array
+    {
+        if (!preg_match_all(self::PROGRESS_PATTERN, $output, $matches)) {
+            return null;
+        }
+
+        return [(int) end($matches[1]), end($matches[2])];
+    }
+
+    /**
      * Get audio file information
      */
     public function getAudioInfo(string $filePath): array
@@ -85,15 +104,12 @@ class AudioConverterService
                 throw new Exception("File does not exist: {$filePath}");
             }
 
-            $command = sprintf(
-                'ffprobe -v quiet -print_format json -show_format -show_streams "%s"',
-                escapeshellarg($filePath)
-            );
-
-            $result = Process::run($command);
+            $result = Process::run([
+                'ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', $filePath,
+            ]);
 
             if (!$result->successful()) {
-                throw new Exception('Failed to get audio info: ' . $result->errorOutput());
+                throw new Exception('Failed to get audio info: ' . ProcessOutput::error($result));
             }
 
             $info = json_decode($result->output(), true);
@@ -123,8 +139,7 @@ class AudioConverterService
      */
     public function validateFfmpegInstalled(): bool
     {
-        $result = Process::run('ffmpeg -version');
-        return $result->successful();
+        return $this->getFfmpegVersion() !== null;
     }
 
     /**
@@ -132,15 +147,19 @@ class AudioConverterService
      */
     public function getFfmpegVersion(): ?string
     {
-        $result = Process::run('ffmpeg -version');
-        
+        try {
+            $result = Process::run(['ffmpeg', '-version']);
+        } catch (Exception $e) {
+            // Thrown when the executable cannot be started at all
+            return null;
+        }
+
         if (!$result->successful()) {
             return null;
         }
 
-        $output = $result->output();
-        preg_match('/ffmpeg version ([^\s]+)/', $output, $matches);
-        
+        preg_match('/ffmpeg version ([^\s]+)/', $result->output(), $matches);
+
         return $matches[1] ?? null;
     }
 
@@ -150,16 +169,12 @@ class AudioConverterService
     public function extractAudio(string $videoPath, string $audioPath): bool
     {
         try {
-            $command = sprintf(
-                'ffmpeg -i "%s" -vn -acodec copy "%s" -y',
-                escapeshellarg($videoPath),
-                escapeshellarg($audioPath)
-            );
-
-            $result = Process::timeout(600)->run($command);
+            $result = Process::timeout(600)->run([
+                'ffmpeg', '-y', '-i', $videoPath, '-vn', '-acodec', 'copy', $audioPath,
+            ]);
 
             if (!$result->successful()) {
-                throw new Exception('Audio extraction failed: ' . $result->errorOutput());
+                throw new Exception('Audio extraction failed: ' . ProcessOutput::error($result));
             }
 
             return file_exists($audioPath);

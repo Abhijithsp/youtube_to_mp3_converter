@@ -33,7 +33,7 @@ http://127.0.0.1:8000
 
 ### Backend Features ✅
 
--   **Laravel 12** with MySQL database
+-   **Laravel 13** with MySQL database
 -   **Queue System** with database driver
 -   **yt-dlp Integration** for YouTube downloads
 -   **FFmpeg Integration** for audio conversion
@@ -68,7 +68,7 @@ http://127.0.0.1:8000
 
 ### Backend
 
--   Laravel 12.44.0
+-   Laravel 13.35.0
 -   PHP 8.3
 -   MySQL Database
 -   Queue Jobs with Database Driver

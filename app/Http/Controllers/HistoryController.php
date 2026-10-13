@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Models\Download;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 
 class HistoryController extends Controller
 {
@@ -40,7 +39,7 @@ class HistoryController extends Controller
             $query->orderBy('completed_at', 'desc');
         }
 
-        $downloads = $query->paginate($request->input('per_page', 20));
+        $downloads = $query->paginate(min(max((int) $request->input('per_page', 20), 1), 100));
 
         return response()->json($downloads);
     }
@@ -53,7 +52,8 @@ class HistoryController extends Controller
         // Only delete records, keep files? Or maybe a flag?
         // User request says "Clear history (keep files option)"
         
-        $keepFiles = $request->input('keep_files', true);
+        // boolean() parses query-string values such as "false" / "0"
+        $keepFiles = $request->boolean('keep_files', true);
         
         // If not keeping files, we need to iterate and delete
         if (!$keepFiles) {

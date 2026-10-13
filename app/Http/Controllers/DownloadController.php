@@ -5,11 +5,11 @@ namespace App\Http\Controllers;
 use App\Models\Download;
 use App\Jobs\DownloadYoutubeAudioJob;
 use App\Services\YouTubeService;
+use App\Support\FileName;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\Storage;
-use Symfony\Component\HttpFoundation\StreamedResponse;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class DownloadController extends Controller
 {
@@ -25,8 +25,9 @@ class DownloadController extends Controller
         $query = Download::query()->latest();
 
         // Filter by status
-        if ($request->has('status')) {
-            $query->where('status', $request->status);
+        // Filter by status; accepts a comma separated list, e.g. status=pending,processing
+        if ($request->filled('status')) {
+            $query->whereIn('status', explode(',', (string) $request->status));
         }
 
         // Search by title or artist
@@ -38,7 +39,7 @@ class DownloadController extends Controller
             });
         }
 
-        $downloads = $query->paginate($request->get('per_page', 20));
+        $downloads = $query->paginate(min(max((int) $request->get('per_page', 20), 1), 100));
 
         return response()->json($downloads);
     }
@@ -75,10 +76,21 @@ class DownloadController extends Controller
             // Extract video ID
             $videoId = $this->youtubeService->extractVideoId($request->youtube_url);
 
-            // Check if already downloaded
+            if (!$videoId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Could not find a video ID in this URL. Use the playlist importer for playlist links.'
+                ], 422);
+            }
+
+            // Reuse an earlier download only if it has the same format/quality and its file still exists
             $existing = Download::where('youtube_id', $videoId)
                 ->where('status', 'completed')
-                ->first();
+                ->where('format', $request->format)
+                ->where('quality', (string) $request->quality)
+                ->latest()
+                ->get()
+                ->first(fn (Download $download) => $download->file_path && file_exists($download->file_path));
 
             if ($existing) {
                 return response()->json([
@@ -92,7 +104,7 @@ class DownloadController extends Controller
             $download = Download::create([
                 'youtube_url' => $request->youtube_url,
                 'youtube_id' => $videoId,
-                'title' => $request->title ?? 'Fetching...',
+                'title' => $request->title ?: Download::PLACEHOLDER_TITLE,
                 'thumbnail_url' => $request->thumbnail_url,
                 'format' => $request->format,
                 'quality' => (string) $request->quality,
@@ -201,18 +213,20 @@ class DownloadController extends Controller
      */
     public function retry(Download $download): JsonResponse
     {
-        if ($download->status !== 'failed') {
+        if (!in_array($download->status, ['failed', 'cancelled'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only failed downloads can be retried'
+                'message' => 'Only failed or cancelled downloads can be retried'
             ], 422);
         }
 
         try {
             $download->update([
                 'status' => 'pending',
+                'status_text' => 'Queued for retry',
                 'error_message' => null,
                 'progress' => 0,
+                'conversion_progress' => 0,
             ]);
 
             DownloadYoutubeAudioJob::dispatch($download);
@@ -246,8 +260,12 @@ class DownloadController extends Controller
         try {
             $download->update([
                 'status' => 'cancelled',
+                'status_text' => 'Cancelled',
                 'error_message' => 'Cancelled by user'
             ]);
+
+            // A running job notices the status change at its next progress update and stops
+            $download->syncPlaylistProgress();
 
             return response()->json([
                 'success' => true,
@@ -266,7 +284,7 @@ class DownloadController extends Controller
     /**
      * Stream/download the audio file
      */
-    public function stream(Download $download): StreamedResponse
+    public function stream(Download $download): BinaryFileResponse
     {
         if ($download->status !== 'completed' || !$download->file_path) {
             abort(404, 'File not found');
@@ -276,16 +294,30 @@ class DownloadController extends Controller
             abort(404, 'File not found on disk');
         }
 
-        $filename = basename($download->file_path);
+        $mimeTypes = [
+            'mp3' => 'audio/mpeg',
+            'flac' => 'audio/flac',
+        ];
 
-        return response()->stream(function() use ($download) {
-            $stream = fopen($download->file_path, 'r');
-            fpassthru($stream);
-            fclose($stream);
-        }, 200, [
-            'Content-Type' => 'audio/' . $download->format,
-            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
-            'Content-Length' => filesize($download->file_path),
-        ]);
+        // BinaryFileResponse supports HTTP range requests, so players can seek
+        return response()->download(
+            $download->file_path,
+            $this->downloadFilename($download),
+            ['Content-Type' => $mimeTypes[$download->format] ?? 'application/octet-stream']
+        );
+    }
+
+    /**
+     * File name offered to the browser: the video title, like the file on disk
+     */
+    private function downloadFilename(Download $download): string
+    {
+        $fallback = pathinfo($download->file_path, PATHINFO_FILENAME);
+
+        $name = $download->title === Download::PLACEHOLDER_TITLE
+            ? $fallback
+            : FileName::fromTitle($download->title, $fallback);
+
+        return $name . '.' . $download->format;
     }
 }

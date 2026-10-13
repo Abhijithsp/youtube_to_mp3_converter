@@ -59,5 +59,6 @@ Route::prefix('settings')->group(function () {
     Route::put('/', [App\Http\Controllers\SettingsController::class, 'update']);
     Route::get('/disk-space', [App\Http\Controllers\SettingsController::class, 'checkDiskSpace']);
     Route::get('/test-dependencies', [App\Http\Controllers\SettingsController::class, 'testDependencies']);
+    Route::get('/test-youtube', [App\Http\Controllers\SettingsController::class, 'testYoutube']);
 });
 

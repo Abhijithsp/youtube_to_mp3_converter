@@ -14,7 +14,7 @@ class DiskSpaceService
     public function checkAvailableSpace(?string $path = null): int
     {
         try {
-            $path = $path ?? config('youtube-converter.download_path');
+            $path = $path ?? Setting::downloadPath();
 
             // Ensure directory exists
             if (!is_dir($path)) {
@@ -55,7 +55,7 @@ class DiskSpaceService
     public function getTotalSpace(?string $path = null): int
     {
         try {
-            $path = $path ?? config('youtube-converter.download_path');
+            $path = $path ?? Setting::downloadPath();
 
             if (!is_dir($path)) {
                 mkdir($path, 0755, true);

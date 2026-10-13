@@ -2,10 +2,14 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class Playlist extends Model
 {
+    /** @use HasFactory<\Database\Factories\PlaylistFactory> */
+    use HasFactory;
+
     protected $fillable = [
         'youtube_playlist_id',
         'title',
@@ -31,13 +35,24 @@ class Playlist extends Model
     }
 
     // Helper methods
-    public function incrementProcessed()
+    /**
+     * Recount items whose download reached a final state. Counting (instead of
+     * incrementing) keeps the number right when a download is retried or several
+     * queue workers finish items of the same playlist at once.
+     */
+    public function syncProgress(): void
     {
-        $this->increment('processed_videos');
-        
-        if ($this->processed_videos >= $this->total_videos) {
-            $this->update(['status' => 'completed']);
+        $processed = $this->items()
+            ->whereHas('download', fn ($query) => $query->whereIn('status', Download::FINAL_STATUSES))
+            ->count();
+
+        $attributes = ['processed_videos' => $processed];
+
+        if ($this->total_videos > 0 && $processed >= $this->total_videos) {
+            $attributes['status'] = 'completed';
         }
+
+        $this->update($attributes);
     }
 
     public function getProgressPercentageAttribute()

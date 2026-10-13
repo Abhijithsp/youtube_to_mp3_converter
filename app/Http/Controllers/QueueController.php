@@ -6,6 +6,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Artisan;
 use App\Models\Download;
+use App\Support\QueueWorkerHeartbeat;
+use Illuminate\Support\Collection;
 
 class QueueController extends Controller
 {
@@ -19,78 +21,60 @@ class QueueController extends Controller
             'pending' => $pending,
             'processing' => $processing,
             'failed' => $failed,
+            'worker_running' => QueueWorkerHeartbeat::isAlive(),
         ]);
     }
 
     public function jobs()
     {
-        $jobs = DB::table('jobs')
-            ->orderBy('id', 'asc')
-            ->get()
-            ->map(function ($job) {
-                $payload = json_decode($job->payload, true);
-                $downloadInfo = null;
-                
-                // Keep it safe, avoid full unserialize if possible or handle errors
-                try {
-                     $commandObj = unserialize($payload['data']['command']);
-                     if (isset($commandObj->download) && $commandObj->download instanceof Download) {
-                         $downloadInfo = [
-                             'id' => $commandObj->download->id,
-                             'title' => $commandObj->download->title,
-                             'thumbnail_url' => $commandObj->download->thumbnail_url,
-                         ];
-                     }
-                } catch (\Exception $e) {
-                    // Ignore unserialize errors
-                }
+        $rows = DB::table('jobs')->orderBy('id', 'asc')->get();
+        $downloads = $this->downloadsFor($rows);
 
-                return [
-                    'id' => $job->id,
-                    'queue' => $job->queue,
-                    'attempts' => $job->attempts,
-                    'reserved_at' => $job->reserved_at,
-                    'created_at' => $job->created_at,
-                    'download' => $downloadInfo
-                ];
-            });
+        $jobs = $rows->map(function ($job) use ($downloads) {
+            $download = $downloads->get($this->downloadIdFromPayload($job->payload));
+
+            return [
+                'id' => $job->id,
+                'queue' => $job->queue,
+                'attempts' => $job->attempts,
+                'reserved_at' => $job->reserved_at,
+                'created_at' => $job->created_at,
+                'download' => $download ? [
+                    'id' => $download->id,
+                    'title' => $download->title,
+                    'thumbnail_url' => $download->thumbnail_url,
+                ] : null,
+            ];
+        });
 
         return response()->json($jobs);
     }
-    
+
     public function failedJobs()
     {
-        $jobs = DB::table('failed_jobs')
-            ->orderBy('failed_at', 'desc')
-            ->get()
-            ->map(function ($job) {
-                $payload = json_decode($job->payload, true);
-                $downloadInfo = null;
-                
-                try {
-                     $commandObj = unserialize($payload['data']['command']);
-                     if (isset($commandObj->download) && $commandObj->download instanceof Download) {
-                         $downloadInfo = [
-                             'id' => $commandObj->download->id,
-                             'title' => $commandObj->download->title,
-                         ];
-                     }
-                } catch (\Exception $e) {
-                }
+        $rows = DB::table('failed_jobs')->orderBy('failed_at', 'desc')->get();
+        $downloads = $this->downloadsFor($rows);
 
-                return [
-                    'id' => $job->id,
-                    'connection' => $job->connection,
-                    'queue' => $job->queue,
-                    'exception' => $job->exception,
-                    'failed_at' => $job->failed_at,
-                    'download' => $downloadInfo
-                ];
-            });
-            
+        $jobs = $rows->map(function ($job) use ($downloads) {
+            $download = $downloads->get($this->downloadIdFromPayload($job->payload));
+
+            return [
+                'id' => $job->id,
+                // queue:retry looks failed jobs up by UUID
+                'uuid' => $job->uuid,
+                'connection' => $job->connection,
+                'queue' => $job->queue,
+                'exception' => $job->exception,
+                'failed_at' => $job->failed_at,
+                'download' => $download ? [
+                    'id' => $download->id,
+                    'title' => $download->title,
+                ] : null,
+            ];
+        });
+
         return response()->json($jobs);
     }
-
     public function retryAllFailed()
     {
         Artisan::call('queue:retry', ['id' => 'all']);
@@ -119,5 +103,35 @@ class QueueController extends Controller
         }
         
         return response()->json(['message' => 'Job not found'], 404);
+    }
+
+    /**
+     * Load the downloads referenced by a set of queue rows in one query
+     */
+    private function downloadsFor(Collection $rows): Collection
+    {
+        $ids = $rows->map(fn ($job) => $this->downloadIdFromPayload($job->payload))->filter()->unique();
+
+        return Download::whereIn('id', $ids)->get()->keyBy('id');
+    }
+
+    /**
+     * Read the Download ID from a queued job payload without unserialize(), which would
+     * instantiate arbitrary classes from database contents. SerializesModels stores models
+     * as a ModelIdentifier: ...s:5:"class";s:19:"App\Models\Download";s:2:"id";i:42;...
+     */
+    private function downloadIdFromPayload(?string $payload): ?int
+    {
+        $command = json_decode((string) $payload, true)['data']['command'] ?? null;
+
+        if (!is_string($command)) {
+            return null;
+        }
+
+        $class = preg_quote(serialize(Download::class), '/');
+
+        return preg_match('/s:5:"class";' . $class . 's:2:"id";i:(\d+);/', $command, $matches)
+            ? (int) $matches[1]
+            : null;
     }
 }

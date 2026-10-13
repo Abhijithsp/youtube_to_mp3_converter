@@ -8,33 +8,46 @@ use Illuminate\Bus\Batchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use App\Models\Download;
+use App\Models\Setting;
 use App\Services\YouTubeService;
 use App\Services\AudioConverterService;
 use App\Services\MetadataService;
 use App\Services\DiskSpaceService;
-use App\Services\UrlGeneratorService;
+use App\Exceptions\DownloadCancelledException;
 use App\Exceptions\InsufficientDiskSpaceException;
 use App\Exceptions\YouTubeDownloadException;
 use App\Exceptions\AudioConversionException;
+use App\Support\FileName;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Exception;
+use Throwable;
 
 class DownloadYoutubeAudioJob implements ShouldQueue
 {
     use Queueable, InteractsWithQueue, SerializesModels, Batchable;
 
+    // Overridden from config/youtube-converter.php in the constructor
     public $timeout = 600; // 10 minutes
     public $tries = 3;
     public $backoff = [60, 300, 900]; // Exponential backoff: 1min, 5min, 15min
+
+    /**
+     * Silently drop the job if the download was deleted before it ran.
+     */
+    public $deleteWhenMissingModels = true;
 
     /**
      * Create a new job instance.
      */
     public function __construct(
         public Download $download
-    ) {}
+    ) {
+        // YOUTUBE_JOB_TIMEOUT / YOUTUBE_JOB_TRIES in .env
+        $this->timeout = max(60, (int) config('youtube-converter.job_timeout', $this->timeout));
+        $this->tries = max(1, (int) config('youtube-converter.job_tries', $this->tries));
+        $this->backoff = config('youtube-converter.job_backoff', $this->backoff);
+    }
 
     /**
      * Execute the job.
@@ -43,40 +56,59 @@ class DownloadYoutubeAudioJob implements ShouldQueue
         YouTubeService $youtubeService,
         AudioConverterService $audioConverter,
         MetadataService $metadataService,
-        DiskSpaceService $diskSpaceService,
-        UrlGeneratorService $urlGenerator
+        DiskSpaceService $diskSpaceService
     ): void
     {
+        $tempFile = null;
+        $finalFile = null;
+
         try {
+            $this->abortIfCancelled();
+
             // Mark as processing
-            $this->download->markAsProcessing();
+            $this->download->update([
+                'status' => 'processing',
+                'progress' => 0,
+                'conversion_progress' => 0,
+                'error_message' => null,
+                'status_text' => 'Fetching video information...',
+            ]);
             Log::info('Starting download job', ['download_id' => $this->download->id]);
 
-            // Step 1: Check disk space
-            $minSpace = (int) \App\Models\Setting::get('min_disk_space_mb', config('youtube-converter.min_disk_space_mb', 500));
-            if (!$diskSpaceService->hasEnoughSpace($minSpace)) {
-                throw new InsufficientDiskSpaceException(
-                    "Not enough disk space available. Required: {$minSpace}MB."
-                );
-            }
-
-            // Step 2: Extract video info if not already done
-            if (!$this->download->youtube_id) {
+            // Step 1: Extract video info. The create endpoint already stores the video ID
+            // (and the UI sends a title), but duration/thumbnail/artist come only from yt-dlp.
+            if ($this->needsVideoInfo()) {
                 $videoInfo = $youtubeService->extractVideoInfo($this->download->youtube_url);
-                
-                $this->download->update([
-                    'youtube_id' => $videoInfo['id'],
-                    'title' => $videoInfo['title'],
-                    'artist' => $videoInfo['artist'] ?? $this->download->artist,
-                    'thumbnail_url' => $videoInfo['thumbnail'],
-                    'duration' => $videoInfo['duration'],
-                ]);
+
+                $this->download->update(array_filter([
+                    'youtube_id' => $this->download->youtube_id ?: $videoInfo['id'],
+                    'title' => $this->hasRealTitle() ? $this->download->title : $videoInfo['title'],
+                    'artist' => $this->download->artist ?: $videoInfo['artist'],
+                    'album' => $this->download->album ?: $videoInfo['album'],
+                    'thumbnail_url' => $this->download->thumbnail_url ?: $videoInfo['thumbnail'],
+                    'duration' => $videoInfo['duration'] ? (int) $videoInfo['duration'] : null,
+                ], fn ($value) => $value !== null && $value !== ''));
             }
 
             $this->download->updateProgress(10);
 
+            // Step 2: Check disk space (configured reserve + estimated size of this file)
+            $estimatedMb = $this->download->duration
+                ? $diskSpaceService->estimateFileSize(
+                    $this->download->duration,
+                    // FLAC is lossless; ~1000kbps is a safe upper estimate
+                    $this->download->format === 'flac' ? 1000 : (int) $this->download->quality
+                )
+                : 0;
+
+            if (!$diskSpaceService->hasEnoughSpace($estimatedMb)) {
+                throw new InsufficientDiskSpaceException(
+                    'Not enough disk space available. Required: ' . $this->minDiskSpaceMb() . "MB free plus ~{$estimatedMb}MB for this file."
+                );
+            }
+
             // Step 3: Prepare download paths
-            $downloadPath = config('youtube-converter.download_path');
+            $downloadPath = rtrim(Setting::downloadPath(), '/\\');
             if (!is_dir($downloadPath)) {
                 mkdir($downloadPath, 0755, true);
             }
@@ -86,22 +118,28 @@ class DownloadYoutubeAudioJob implements ShouldQueue
                 mkdir($tempPath, 0755, true);
             }
 
-            $safeFilename = Str::slug($this->download->title);
-            $tempFile = $tempPath . '/' . $safeFilename . '_' . time();
+            // Save under the video's own title, e.g. "D-Sturb - LADY (Official Music Video).mp3"
+            $safeFilename = FileName::fromTitle(
+                $this->download->title,
+                $this->download->youtube_id ?: 'download-' . $this->download->id
+            );
+
+            // Download ID keeps temp files of concurrent jobs apart
+            $tempFile = $tempPath . '/download_' . $this->download->id . '_' . time();
             $finalFile = $downloadPath . '/' . $safeFilename . '.' . $this->download->format;
 
-            // Make filename unique if it already exists
+            // Never overwrite an earlier download: "Title (1).mp3", "Title (2).mp3", ...
             $counter = 1;
             while (file_exists($finalFile)) {
-                $finalFile = $downloadPath . '/' . $safeFilename . '_' . $counter . '.' . $this->download->format;
+                $finalFile = $downloadPath . '/' . $safeFilename . ' (' . $counter . ').' . $this->download->format;
                 $counter++;
             }
 
-            $this->download->updateProgress(20);
+            $this->download->update(['progress' => 20, 'status_text' => 'Starting download...']);
 
             // Step 4: Download audio using yt-dlp
             Log::info('Downloading audio', ['url' => $this->download->youtube_url]);
-            
+
             $lastReportedProgress = 20;
             try {
                 $youtubeService->downloadAudio(
@@ -114,12 +152,15 @@ class DownloadYoutubeAudioJob implements ShouldQueue
                         // Map it to the 20-50 overall progress range
                         $overallProgress = 20 + ($progress * 0.3);
                         $intProgress = (int) $overallProgress;
-                        
+
                         $sizeText = $size ? " ($size)" : "";
                         $statusText = "Downloading video stream... {$progress}%{$sizeText}";
-                        
+
                         // Only update the database when the integer percentage changes to avoid spamming
                         if ($intProgress > $lastReportedProgress) {
+                            // Throwing here stops the running yt-dlp process
+                            $this->abortIfCancelled();
+
                             $this->download->update([
                                 'progress' => $intProgress,
                                 'status_text' => $statusText
@@ -128,14 +169,20 @@ class DownloadYoutubeAudioJob implements ShouldQueue
                         }
                     }
                 );
+            } catch (DownloadCancelledException $e) {
+                throw $e;
             } catch (Exception $e) {
                 throw new YouTubeDownloadException(
                     'Failed to download audio from YouTube: ' . $e->getMessage()
                 );
             }
 
-            $this->download->updateProgress(50);
-            $this->download->update(['status_text' => 'Download complete. Preparing for conversion...']);
+            $this->abortIfCancelled();
+
+            $this->download->update([
+                'progress' => 50,
+                'status_text' => 'Download complete. Preparing for conversion...',
+            ]);
 
             // Step 5: Find the downloaded file (yt-dlp adds extension)
             $downloadedFile = null;
@@ -149,21 +196,23 @@ class DownloadYoutubeAudioJob implements ShouldQueue
             if (!$downloadedFile || !file_exists($downloadedFile)) {
                 throw new YouTubeDownloadException('Downloaded file not found');
             }
-            
+
             $originalFileSize = filesize($downloadedFile);
             $this->download->update(['original_file_size' => $originalFileSize]);
 
             $this->download->updateProgress(60);
 
-            // Step 6: Convert if necessary (since we removed -x from yt-dlp, it will be necessary)
+            // Step 6: Convert if necessary (yt-dlp downloads the raw audio stream, e.g. webm/m4a)
             $needsConversion = pathinfo($downloadedFile, PATHINFO_EXTENSION) !== $this->download->format;
-            
+
             if ($needsConversion) {
                 Log::info('Converting audio format');
-                
+
+                $this->download->update(['status_text' => "Converting to {$this->download->format}..."]);
+
                 $duration = $this->download->duration ?: 1; // avoid division by zero
                 $lastConversionProgress = 0;
-                
+
                 try {
                     $audioConverter->convert(
                         $downloadedFile,
@@ -174,14 +223,16 @@ class DownloadYoutubeAudioJob implements ShouldQueue
                             // parse timeStr "00:00:10.00" to seconds
                             $parts = explode(':', $timeStr);
                             if (count($parts) === 3) {
-                                $seconds = ($parts[0] * 3600) + ($parts[1] * 60) + (float)$parts[2];
+                                $seconds = ((int) $parts[0] * 3600) + ((int) $parts[1] * 60) + (float) $parts[2];
                                 $percent = min(100, max(0, ($seconds / $duration) * 100));
                                 $intPercent = (int) $percent;
-                                
+
                                 if ($intPercent > $lastConversionProgress) {
+                                    $this->abortIfCancelled();
+
                                     // Map 0-100 conversion to 60-80 overall progress
                                     $overallProgress = 60 + ($percent * 0.2);
-                                    
+
                                     $sizeMb = number_format($sizeKb / 1024, 2);
                                     $this->download->update([
                                         'progress' => (int) $overallProgress,
@@ -193,9 +244,11 @@ class DownloadYoutubeAudioJob implements ShouldQueue
                             }
                         }
                     );
-                    
+
                     // Remove temp file after conversion
                     @unlink($downloadedFile);
+                } catch (DownloadCancelledException $e) {
+                    throw $e;
                 } catch (Exception $e) {
                     throw new AudioConversionException(
                         'Failed to convert audio: ' . $e->getMessage()
@@ -206,11 +259,17 @@ class DownloadYoutubeAudioJob implements ShouldQueue
                 rename($downloadedFile, $finalFile);
             }
 
-            $this->download->updateProgress(80);
+            $this->abortIfCancelled();
+
+            $this->download->update([
+                'progress' => 80,
+                'conversion_progress' => 100,
+                'status_text' => 'Applying metadata tags...',
+            ]);
 
             // Step 7: Apply metadata tags
             Log::info('Applying metadata tags');
-            
+
             try {
                 $metadata = [
                     'title' => $this->download->title,
@@ -222,12 +281,13 @@ class DownloadYoutubeAudioJob implements ShouldQueue
 
                 // Download and attach thumbnail if available
                 if ($this->download->thumbnail_url) {
-                    $thumbnailPath = $tempPath . '/' . $safeFilename . '_thumb.jpg';
-                    
+                    $thumbnailPath = $tempFile . '_thumb';
+
                     if ($metadataService->downloadThumbnail($this->download->thumbnail_url, $thumbnailPath)) {
                         $metadataService->attachThumbnail($finalFile, $thumbnailPath);
-                        @unlink($thumbnailPath);
                     }
+
+                    @unlink($thumbnailPath);
                 }
             } catch (Exception $e) {
                 // Metadata tagging is not critical, log and continue
@@ -236,39 +296,50 @@ class DownloadYoutubeAudioJob implements ShouldQueue
 
             $this->download->updateProgress(90);
 
-            // Step 8: Get file info and generate download URL
-            $fileSize = filesize($finalFile);
-            $downloadUrl = $urlGenerator->generateDownloadUrl($this->download);
-
-            // Step 9: Mark as completed
+            // Step 8: Mark as completed
             $this->download->update([
                 'status' => 'completed',
+                'status_text' => 'Completed',
                 'file_path' => $finalFile,
-                'file_size' => $fileSize,
-                'download_url' => $downloadUrl,
+                'file_size' => filesize($finalFile),
                 'progress' => 100,
+                'error_message' => null,
                 'completed_at' => now(),
             ]);
+
+            $this->download->syncPlaylistProgress();
 
             Log::info('Download completed successfully', [
                 'download_id' => $this->download->id,
                 'file_path' => $finalFile,
             ]);
 
-        } catch (Exception $e) {
+        } catch (DownloadCancelledException $e) {
+            Log::info('Download cancelled', ['download_id' => $this->download->id]);
+
+            $this->cleanUp($tempFile, $finalFile);
+
+            // No-op when the download was deleted rather than cancelled
+            Download::whereKey($this->download->id)->update(['status_text' => 'Cancelled']);
+        } catch (Throwable $e) {
             Log::error('Download job failed', [
                 'download_id' => $this->download->id,
+                'attempt' => $this->attempts(),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            $this->download->markAsFailed($e->getMessage());
+            $this->cleanUp($tempFile, $finalFile);
 
-            // Clean up any temp files
-            if (isset($tempFile)) {
-                foreach (glob($tempFile . '*') as $file) {
-                    @unlink($file);
-                }
+            // Keep the download "pending" between attempts so the UI does not show it as
+            // failed (and offer a manual retry) while the queue will retry it anyway.
+            // The final attempt is handled by failed().
+            if ($this->attempts() < $this->tries && !$this->download->isCancelled()) {
+                $this->download->update([
+                    'status' => 'pending',
+                    'error_message' => $e->getMessage(),
+                    'status_text' => "Attempt {$this->attempts()} of {$this->tries} failed, retrying...",
+                ]);
             }
 
             // Re-throw to trigger retry mechanism
@@ -277,17 +348,72 @@ class DownloadYoutubeAudioJob implements ShouldQueue
     }
 
     /**
-     * Handle a job failure.
+     * Handle a job failure (after the last attempt, a timeout, or a worker crash).
      */
-    public function failed(Exception $exception): void
+    public function failed(?Throwable $exception): void
     {
+        $message = $exception?->getMessage() ?? 'Unknown error';
+
         Log::error('Download job failed permanently', [
             'download_id' => $this->download->id,
-            'error' => $exception->getMessage(),
+            'error' => $message,
         ]);
 
-        $this->download->markAsFailed(
-            'Download failed after ' . $this->tries . ' attempts: ' . $exception->getMessage()
-        );
+        if ($this->download->isCancelled()) {
+            return;
+        }
+
+        $this->download->update([
+            'status' => 'failed',
+            'status_text' => 'Failed',
+            'error_message' => 'Download failed after ' . $this->attempts() . ' attempt(s): ' . $message,
+        ]);
+
+        $this->download->syncPlaylistProgress();
+    }
+
+    /**
+     * Stop processing when the user cancelled or deleted the download.
+     */
+    private function abortIfCancelled(): void
+    {
+        if ($this->download->isCancelled()) {
+            throw new DownloadCancelledException("Download {$this->download->id} was cancelled");
+        }
+    }
+
+    private function needsVideoInfo(): bool
+    {
+        return !$this->hasRealTitle()
+            || !$this->download->youtube_id
+            || !$this->download->duration
+            || !$this->download->thumbnail_url;
+    }
+
+    private function hasRealTitle(): bool
+    {
+        return filled($this->download->title) && $this->download->title !== Download::PLACEHOLDER_TITLE;
+    }
+
+    private function minDiskSpaceMb(): int
+    {
+        return (int) Setting::get('min_disk_space_mb', config('youtube-converter.min_disk_space_mb', 500));
+    }
+
+    /**
+     * Remove temp files and a partially written output file.
+     */
+    private function cleanUp(?string $tempFile, ?string $finalFile): void
+    {
+        if ($tempFile) {
+            foreach (glob($tempFile . '*') ?: [] as $file) {
+                @unlink($file);
+            }
+        }
+
+        // Only remove the output if this job created it but never finished
+        if ($finalFile && file_exists($finalFile) && $this->download->file_path !== $finalFile) {
+            @unlink($finalFile);
+        }
     }
 }

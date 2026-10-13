@@ -9,7 +9,26 @@ return [
     | The directory where downloaded audio files will be stored.
     |
     */
-    'download_path' => env('YOUTUBE_DOWNLOAD_PATH', storage_path('app/downloads')),
+    'download_path' => env('YOUTUBE_DOWNLOAD_PATH', storage_path('app' . DIRECTORY_SEPARATOR . 'downloads')),
+
+    /*
+    |--------------------------------------------------------------------------
+    | YouTube Cookies
+    |--------------------------------------------------------------------------
+    |
+    | YouTube sometimes answers "Sign in to confirm you're not a bot". Passing the
+    | cookies of a browser where you are signed in to YouTube avoids this. Either
+    | name a browser (firefox, chrome, edge, brave, ...) or point to an exported
+    | Netscape-format cookies.txt file. Both can also be set on the Settings page.
+    |
+    | On Windows, Chromium-based browsers lock their cookie database while open,
+    | so Firefox or a cookies.txt file is the most reliable choice. If cookies
+    | cannot be read, downloads automatically continue without them.
+    |
+    */
+    'cookies_from_browser' => env('YTDLP_COOKIES_FROM_BROWSER'),
+
+    'cookies_file' => env('YTDLP_COOKIES_FILE'),
 
     /*
     |--------------------------------------------------------------------------
@@ -20,16 +39,6 @@ return [
     |
     */
     'max_playlist_size' => env('MAX_PLAYLIST_SIZE', 50),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Max Concurrent Downloads
-    |--------------------------------------------------------------------------
-    |
-    | Maximum number of downloads that can be processed simultaneously.
-    |
-    */
-    'max_concurrent_downloads' => env('MAX_CONCURRENT_DOWNLOADS', 3),
 
     /*
     |--------------------------------------------------------------------------

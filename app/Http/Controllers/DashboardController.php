@@ -35,7 +35,8 @@ class DashboardController extends Controller
             'total_storage' => $totalStorage,
             'queue_pending' => $pendingJobs,
             'jobs_failed' => $failedJobs,
-            'disk_space_free' => $this->diskSpaceService->checkAvailableSpace() . ' MB',
+            'downloads_failed' => Download::failed()->count(),
+            'disk_space_free' => $this->formatBytes($this->diskSpaceService->checkAvailableSpace() * 1024 * 1024),
             'recent_downloads' => $recentDownloads
         ]);
     }

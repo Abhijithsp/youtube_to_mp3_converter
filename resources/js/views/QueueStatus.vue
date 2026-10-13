@@ -1,237 +1,222 @@
 <template>
-  <div class="max-w-4xl mx-auto px-4 py-8">
-    <div class="mb-8">
-      <h1 class="text-3xl font-bold text-white mb-2">Queue Status</h1>
-      <p class="text-gray-400">Monitor and manage background download tasks</p>
-    </div>
-
-    <!-- Stats Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-      <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
-        <div class="text-gray-400 text-sm font-medium uppercase tracking-wider mb-2">Pending</div>
-        <div class="text-3xl font-bold text-white">{{ stats.pending }}</div>
-      </div>
-      <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
-        <div class="text-gray-400 text-sm font-medium uppercase tracking-wider mb-2">Processing</div>
-        <div class="text-3xl font-bold text-blue-400">{{ stats.processing }}</div>
-      </div>
-      <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
-        <div class="text-gray-400 text-sm font-medium uppercase tracking-wider mb-2">Failed</div>
-        <div class="text-3xl font-bold text-red-400">{{ stats.failed }}</div>
-      </div>
-    </div>
+  <div class="mx-auto max-w-3xl">
+    <PageHeader title="Queue" subtitle="Downloads in progress, waiting, or needing attention." />
 
     <!-- Tabs -->
-    <div class="flex space-x-1 bg-gray-800/50 p-1 rounded-lg mb-6 w-fit">
-      <button 
-        @click="activeTab = 'active'"
-        class="px-4 py-2 rounded-md text-sm font-medium transition-colors"
-        :class="activeTab === 'active' ? 'bg-purple-600 text-white shadow' : 'text-gray-400 hover:text-white'"
-      >
-        Active Jobs
-      </button>
-      <button 
-        @click="activeTab = 'failed'"
-        class="px-4 py-2 rounded-md text-sm font-medium transition-colors"
-        :class="activeTab === 'failed' ? 'bg-purple-600 text-white shadow' : 'text-gray-400 hover:text-white'"
-      >
-        Failed Jobs
-      </button>
-    </div>
-
-    <!-- Active Jobs List -->
-    <div v-if="activeTab === 'active'" class="space-y-4">
-      <div v-if="loading" class="text-center py-12">
-        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-500 mx-auto"></div>
-        <p class="text-gray-400 mt-4">Loading queue...</p>
-      </div>
-      <div v-else-if="jobs.length === 0" class="bg-gray-800/30 rounded-lg p-12 text-center border border-gray-700 border-dashed">
-        <svg class="w-16 h-16 text-gray-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
-        </svg>
-        <p class="text-xl text-gray-400">Queue is empty</p>
-        <p class="text-sm text-gray-500 mt-2">New downloads will appear here</p>
-      </div>
-      <div v-else>
-        <QueueItem 
-          v-for="job in jobs" 
-          :key="job.id" 
-          :job="job" 
-          @cancel="cancelJob"
-        />
-      </div>
-    </div>
-
-    <!-- Failed Jobs List -->
-    <div v-if="activeTab === 'failed'" class="space-y-4">
-      <div v-if="failedJobs.length > 0" class="flex justify-end space-x-3 mb-4">
-        <button 
-          @click="retryAll"
-          class="flex items-center space-x-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
+    <div class="mb-3 flex items-center gap-2">
+      <div class="seg !w-auto" role="tablist">
+        <button
+          v-for="t in tabs"
+          :key="t.value"
+          type="button"
+          role="tab"
+          :aria-pressed="tab === t.value"
+          :aria-selected="tab === t.value"
+          class="!px-4"
+          @click="setTab(t.value)"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-          <span>Retry All</span>
-        </button>
-        <button 
-          @click="clearFailed"
-          class="flex items-center space-x-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm font-medium transition-colors"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-          <span>Clear List</span>
+          {{ t.label }}
+          <span
+            v-if="t.count"
+            class="grid h-5 min-w-5 place-items-center rounded-full px-1 text-[11px] font-semibold"
+            :class="t.value === 'failed' ? 'bg-danger text-[color:var(--md-surface)]' : 'bg-primary text-on-primary'"
+          >
+            {{ t.count }}
+          </span>
         </button>
       </div>
 
-      <div v-if="loadingFailed" class="text-center py-12">
-        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-red-500 mx-auto"></div>
-        <p class="text-gray-400 mt-4">Loading failed jobs...</p>
+      <div v-if="tab === 'failed' && failed.length" class="ml-auto flex gap-1">
+        <button type="button" class="btn btn-text btn-sm" @click="clearFailed">
+          <AppIcon :path="mdiDeleteSweepOutline" :size="18" />
+          <span class="hidden sm:inline">Clear</span>
+        </button>
+        <button type="button" class="btn btn-tonal btn-sm" @click="retryAll">
+          <AppIcon :path="mdiRefresh" :size="18" />
+          Retry all
+        </button>
       </div>
-      <div v-else-if="failedJobs.length === 0" class="bg-gray-800/30 rounded-lg p-12 text-center border border-gray-700 border-dashed">
-        <svg class="w-16 h-16 text-gray-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-        </svg>
-        <p class="text-xl text-gray-400">No failed jobs</p>
-        <p class="text-sm text-gray-500 mt-2">Everything is running smoothly</p>
+    </div>
+
+    <section class="card overflow-hidden">
+      <div v-if="loading" class="flex justify-center py-12 text-fg-muted">
+        <AppIcon :path="mdiLoading" :size="28" spin />
       </div>
-      <div v-else>
-        <QueueItem 
-          v-for="job in failedJobs" 
-          :key="job.id" 
-          :job="job" 
-          :isFailedList="true"
-          @retry="retryJob"
+
+      <template v-else-if="tab === 'active'">
+        <EmptyState
+          v-if="!active.length"
+          :icon="mdiCheckAll"
+          title="Nothing in the queue"
+          text="New downloads appear here while they run."
+        >
+          <router-link to="/download" class="btn btn-tonal btn-sm">
+            <AppIcon :path="mdiPlus" :size="18" />
+            New download
+          </router-link>
+        </EmptyState>
+        <div v-else class="divide-y divide-line">
+          <DownloadRow v-for="d in active" :key="d.id" :download="d">
+            <template #actions>
+              <button type="button" class="icon-btn" title="Cancel" aria-label="Cancel" @click="cancel(d)">
+                <AppIcon :path="mdiStopCircleOutline" />
+              </button>
+            </template>
+          </DownloadRow>
+        </div>
+      </template>
+
+      <template v-else>
+        <EmptyState
+          v-if="!failed.length"
+          :icon="mdiShieldCheckOutline"
+          title="No failed downloads"
+          text="Everything that ran finished successfully."
         />
-      </div>
-    </div>
-    
-    <!-- Toast/Notification placeholder (could be a component) -->
-    <div v-if="toast.show" class="fixed bottom-4 right-4 p-4 rounded-lg shadow-lg text-white transition-opacity duration-300" :class="toast.type === 'error' ? 'bg-red-600' : 'bg-green-600'">
-      {{ toast.message }}
-    </div>
+        <div v-else class="divide-y divide-line">
+          <DownloadRow v-for="d in failed" :key="d.id" :download="d">
+            <template #actions>
+              <button type="button" class="icon-btn" title="Retry" aria-label="Retry" @click="retry(d)">
+                <AppIcon :path="mdiRefresh" />
+              </button>
+              <button type="button" class="icon-btn" title="Remove" aria-label="Remove" @click="remove(d)">
+                <AppIcon :path="mdiDeleteOutline" />
+              </button>
+            </template>
+          </DownloadRow>
+        </div>
+      </template>
+    </section>
   </div>
 </template>
 
 <script>
-import { queueAPI } from '../services/api';
-import QueueItem from '../components/QueueItem.vue';
+import {
+  mdiCheckAll,
+  mdiDeleteOutline,
+  mdiDeleteSweepOutline,
+  mdiLoading,
+  mdiPlus,
+  mdiRefresh,
+  mdiShieldCheckOutline,
+  mdiStopCircleOutline,
+} from '@mdi/js';
+import AppIcon from '../components/AppIcon.vue';
+import DownloadRow from '../components/DownloadRow.vue';
+import EmptyState from '../components/EmptyState.vue';
+import PageHeader from '../components/PageHeader.vue';
+import { downloadAPI, queueAPI } from '../services/api';
+import { confirmDialog, errorMessage, notify } from '../ui';
 
 export default {
   name: 'QueueStatus',
-  components: {
-    QueueItem
-  },
+  components: { AppIcon, DownloadRow, EmptyState, PageHeader },
   data() {
     return {
-      activeTab: 'active',
-      stats: {
-        pending: 0,
-        processing: 0,
-        failed: 0
-      },
-      jobs: [],
-      failedJobs: [],
-      loading: false,
-      loadingFailed: false,
-      pollInterval: null,
-      toast: {
-        show: false,
-        message: '',
-        type: 'success'
-      }
+      tab: this.$route.query.tab === 'failed' ? 'failed' : 'active',
+      active: [],
+      failed: [],
+      loading: true,
+      timer: null,
+      mdiCheckAll,
+      mdiDeleteOutline,
+      mdiDeleteSweepOutline,
+      mdiLoading,
+      mdiPlus,
+      mdiRefresh,
+      mdiShieldCheckOutline,
+      mdiStopCircleOutline,
     };
   },
+  computed: {
+    tabs() {
+      return [
+        { value: 'active', label: 'Active', count: this.active.length },
+        { value: 'failed', label: 'Failed', count: this.failed.length },
+      ];
+    },
+  },
   mounted() {
-    this.refreshAll();
-    // Poll every 3 seconds
-    this.pollInterval = setInterval(this.refreshAll, 3000);
+    this.refresh();
+    this.timer = setInterval(this.refresh, 1500);
   },
   beforeUnmount() {
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval);
-    }
+    clearInterval(this.timer);
   },
   methods: {
-    async refreshAll() {
-      await Promise.all([
-        this.fetchStats(),
-        this.activeTab === 'active' ? this.fetchJobs() : this.fetchFailedJobs()
-      ]);
+    setTab(value) {
+      this.tab = value;
+      this.$router.replace({ query: value === 'failed' ? { tab: 'failed' } : {} });
     },
-    async fetchStats() {
+
+    async refresh() {
       try {
-        const response = await queueAPI.getStatus();
-        this.stats = response.data;
+        const [active, failed] = await Promise.all([
+          downloadAPI.getAll({ status: 'processing,pending', per_page: 100 }),
+          downloadAPI.getAll({ status: 'failed,cancelled', per_page: 100 }),
+        ]);
+        // Running downloads first, then the oldest waiting one (next in line)
+        this.active = active.data.data.sort((a, b) =>
+          a.status === b.status ? a.id - b.id : a.status === 'processing' ? -1 : 1,
+        );
+        this.failed = failed.data.data;
       } catch (error) {
-        console.error('Failed to fetch queue stats', error);
-      }
-    },
-    async fetchJobs() {
-      // Don't set loading on poll updates to avoid flickering
-      // this.loading = true; 
-      try {
-        const response = await queueAPI.getJobs();
-        this.jobs = response.data;
-      } catch (error) {
-        console.error('Failed to fetch jobs', error);
+        clearInterval(this.timer);
+        notify(errorMessage(error, 'Could not load the queue'), 'error');
       } finally {
-        // this.loading = false;
+        this.loading = false;
       }
     },
-    async fetchFailedJobs() {
+
+    async cancel(download) {
       try {
-        const response = await queueAPI.getFailedJobs();
-        this.failedJobs = response.data;
+        await downloadAPI.cancel(download.id);
+        notify('Download cancelled.');
+        this.refresh();
       } catch (error) {
-        console.error('Failed to fetch failed jobs', error);
+        notify(errorMessage(error, 'Could not cancel'), 'error');
       }
     },
-    async cancelJob(id) {
+
+    async retry(download) {
       try {
-        await queueAPI.cancelJob(id);
-        this.showToast('Job cancelled successfully');
-        this.refreshAll();
+        await downloadAPI.retry(download.id);
+        this.refresh();
       } catch (error) {
-        this.showToast('Failed to cancel job', 'error');
+        notify(errorMessage(error, 'Could not retry'), 'error');
       }
     },
-    async retryJob(id) {
-      try {
-        await queueAPI.retryJob(id);
-        this.showToast('Job queued for retry');
-        this.refreshAll();
-      } catch (error) {
-        this.showToast('Failed to retry job', 'error');
-      }
-    },
+
     async retryAll() {
+      const results = await Promise.allSettled(this.failed.map((d) => downloadAPI.retry(d.id)));
+      const ok = results.filter((r) => r.status === 'fulfilled').length;
+      notify(`Retrying ${ok} download${ok === 1 ? '' : 's'}.`, 'success');
+      this.setTab('active');
+      this.refresh();
+    },
+
+    async remove(download) {
       try {
-        await queueAPI.retryAllFailed();
-        this.showToast('All failed jobs queued for retry');
-        this.refreshAll();
+        await downloadAPI.delete(download.id);
+        this.failed = this.failed.filter((d) => d.id !== download.id);
       } catch (error) {
-        this.showToast('Failed to retry all jobs', 'error');
+        notify(errorMessage(error, 'Could not remove'), 'error');
       }
     },
+
     async clearFailed() {
-      if (!confirm('Are you sure you want to clear all failed jobs history?')) return;
-      try {
-        await queueAPI.clearFailed();
-        this.showToast('Failed jobs cleared');
-        this.refreshAll();
-      } catch (error) {
-        this.showToast('Failed to clear jobs', 'error');
-      }
+      const ok = await confirmDialog({
+        title: 'Clear failed downloads?',
+        message: `Removes ${this.failed.length} failed or cancelled downloads from the list.`,
+        confirmLabel: 'Clear',
+        danger: true,
+      });
+      if (!ok) return;
+      await Promise.allSettled(this.failed.map((d) => downloadAPI.delete(d.id)));
+      // Also drop the matching records in the failed_jobs table
+      await queueAPI.clearFailed().catch(() => {});
+      this.refresh();
     },
-    showToast(message, type = 'success') {
-      this.toast = { show: true, message, type };
-      setTimeout(() => {
-        this.toast.show = false;
-      }, 3000);
-    }
   },
-  watch: {
-    activeTab() {
-      this.refreshAll();
-    }
-  }
-}
+};
 </script>

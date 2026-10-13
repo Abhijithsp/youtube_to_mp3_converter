@@ -105,13 +105,16 @@ If these are not recognized, add them to your system `PATH` and restart terminal
 You can override converter behavior using env variables:
 
 ```env
-YOUTUBE_DOWNLOAD_PATH=storage/app/downloads
+YOUTUBE_DOWNLOAD_PATH=storage/app/downloads   # absolute, or relative to the project folder
 MAX_PLAYLIST_SIZE=50
-MAX_CONCURRENT_DOWNLOADS=3
 RATE_LIMIT_SECONDS=2
 MIN_DISK_SPACE_MB=500
 YOUTUBE_JOB_TIMEOUT=600
 YOUTUBE_JOB_TRIES=3
+
+# If YouTube asks you to "Sign in to confirm you're not a bot" (also on the Settings page)
+YTDLP_COOKIES_FROM_BROWSER=firefox   # firefox, chrome, edge, brave, ... (Chromium browsers must be closed)
+YTDLP_COOKIES_FILE=                  # or an exported Netscape cookies.txt file
 ```
 
 ## 7) Run the Application (Recommended Dev Flow)

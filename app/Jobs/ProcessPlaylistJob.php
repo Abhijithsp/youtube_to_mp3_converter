@@ -9,6 +9,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use App\Models\Playlist;
 use App\Models\Download;
+use App\Services\YouTubeService;
 use Illuminate\Support\Facades\Log;
 use Exception;
 
@@ -28,7 +29,7 @@ class ProcessPlaylistJob implements ShouldQueue
     /**
      * Execute the job.
      */
-    public function handle(): void
+    public function handle(YouTubeService $youtubeService): void
     {
         try {
             $this->playlist->update(['status' => 'processing']);
@@ -47,11 +48,14 @@ class ProcessPlaylistJob implements ShouldQueue
             $delaySeconds = (int) \App\Models\Setting::get('rate_limit_seconds', config('youtube-converter.rate_limit_seconds', 2));
 
             foreach ($items as $index => $item) {
-                // Create download record
+                // Create download record. youtube_id and title are required columns; the download job
+                // replaces the placeholder title with the real one from yt-dlp
                 $download = Download::create([
                     'youtube_url' => $item->youtube_url,
+                    'youtube_id' => $youtubeService->extractVideoId($item->youtube_url) ?? '',
+                    'title' => Download::PLACEHOLDER_TITLE,
                     'format' => $this->format,
-                    'quality' => $this->quality,
+                    'quality' => (string) $this->quality,
                     'status' => 'pending',
                 ]);
 
@@ -62,21 +66,6 @@ class ProcessPlaylistJob implements ShouldQueue
                 DownloadYoutubeAudioJob::dispatch($download)
                     ->delay(now()->addSeconds($index * $delaySeconds));
             }
-            
-            // Note: We don't mark playlist as completed here. 
-            // Ideally we should track the progress of individual downloads.
-            // For now, we'll rely on the processed_videos counter which should be updated 
-            // when downloads complete, perhaps via an event listener or observer?
-            // Or simpler: The playlist status remains 'processing' until all linked downloads are done.
-            // But since DownloadJob doesn't know about Playlist, we might need to handle this differently.
-            // For now, let's keep it simple: this job just dispatches the download jobs.
-            // The Playlist progress/completion logic might need a separate observer or scheduled job to update.
-            // Or we can update the Playlist model:
-            
-            // Actually, the Plan says "Update playlist progress".
-            // Since DownloadYoutubeAudioJob is independent, we can attach a callback or chain?
-            // But for a large playlist, chaining is complex.
-            // Let's settle for: detailed progress tracking might be done via querying the linked downloads.
             
         } catch (Exception $e) {
             Log::error('Playlist processing failed', [

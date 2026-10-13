@@ -87,8 +87,10 @@ Body:
 {
     "download_path": "C:/Music",
     "max_playlist_size": 50,
-    "max_concurrent_downloads": 3,
-    "min_disk_space_mb": 500
+    "rate_limit_seconds": 2,
+    "min_disk_space_mb": 500,
+    "ytdlp_cookies_browser": "firefox",
+    "ytdlp_cookies_file": ""
 }
 ```
 
@@ -96,3 +98,6 @@ Body:
 
 **GET** `/api/settings/test-dependencies`
 Returns installation status of `yt-dlp` and `ffmpeg`.
+
+**GET** `/api/settings/test-youtube`
+Makes one YouTube request with the saved cookie settings and returns `{ ok, message, cookies }`.

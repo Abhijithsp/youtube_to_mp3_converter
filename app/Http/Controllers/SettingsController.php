@@ -7,6 +7,8 @@ use App\Services\YouTubeService;
 use App\Services\AudioConverterService;
 use App\Services\DiskSpaceService;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class SettingsController extends Controller
 {
@@ -16,53 +18,92 @@ class SettingsController extends Controller
         protected DiskSpaceService $diskSpaceService
     ) {}
 
+    /**
+     * Keys editable on the Settings page with their fallback values
+     */
+    private function defaults(): array
+    {
+        return [
+            'download_path' => config('youtube-converter.download_path'),
+            'max_playlist_size' => (int) config('youtube-converter.max_playlist_size'),
+            'rate_limit_seconds' => (int) config('youtube-converter.rate_limit_seconds'),
+            'min_disk_space_mb' => (int) config('youtube-converter.min_disk_space_mb'),
+            'ytdlp_cookies_browser' => (string) config('youtube-converter.cookies_from_browser'),
+            'ytdlp_cookies_file' => (string) config('youtube-converter.cookies_file'),
+        ];
+    }
+
     public function index()
     {
-        // Get all settings from database
-        $settings = Setting::all()->pluck('value', 'key');
-        
-        // Merge with defaults (in case some keys don't exist in DB yet)
-        $defaults = [
-            'download_path' => config('youtube-converter.download_path'),
-            'max_playlist_size' => config('youtube-converter.max_playlist_size'),
-            'max_concurrent_downloads' => config('youtube-converter.max_concurrent_downloads'),
-            'min_disk_space_mb' => config('youtube-converter.min_disk_space_mb'),
-        ];
-        
-        foreach ($defaults as $key => $value) {
-            if (!isset($settings[$key])) {
-                $settings[$key] = $value;
-            }
+        $stored = Setting::all()->pluck('value', 'key');
+
+        $settings = [];
+        foreach ($this->defaults() as $key => $default) {
+            $value = $stored[$key] ?? $default;
+            $settings[$key] = is_int($default) ? (int) $value : (string) $value;
         }
-        
-        return response()->json($settings);
+
+        return response()->json($settings + [
+            'cookie_browsers' => YouTubeService::COOKIE_BROWSERS,
+        ]);
     }
 
     public function update(Request $request)
     {
         $data = $request->validate([
             'download_path' => 'required|string',
-            'max_playlist_size' => 'required|integer|min:1',
-            'max_concurrent_downloads' => 'required|integer|min:1|max:10',
+            'max_playlist_size' => 'required|integer|min:1|max:1000',
+            'rate_limit_seconds' => 'sometimes|integer|min:0|max:300',
             'min_disk_space_mb' => 'required|integer|min:100',
+            'ytdlp_cookies_browser' => ['sometimes', 'nullable', Rule::in(YouTubeService::COOKIE_BROWSERS)],
+            'ytdlp_cookies_file' => 'sometimes|nullable|string',
         ]);
 
+        $path = Setting::absolutePath(rtrim($data['download_path'], '/\\'));
+
+        // The download job writes here, so reject paths it cannot create or write to
+        if (!is_dir($path) && !@mkdir($path, 0755, true)) {
+            throw ValidationException::withMessages([
+                'download_path' => 'The download path does not exist and could not be created.',
+            ]);
+        }
+
+        if (!is_writable($path)) {
+            throw ValidationException::withMessages([
+                'download_path' => 'The download path is not writable.',
+            ]);
+        }
+
+        $data['download_path'] = $path;
+
+        if (filled($data['ytdlp_cookies_file'] ?? null) && !is_file($data['ytdlp_cookies_file'])) {
+            throw ValidationException::withMessages([
+                'ytdlp_cookies_file' => 'The cookies file does not exist.',
+            ]);
+        }
+
         foreach ($data as $key => $value) {
-            Setting::set($key, $value);
+            // Empty values are stored as '' so they override the .env defaults
+            Setting::set($key, $value ?? '');
         }
 
         return response()->json(['message' => 'Settings updated successfully']);
     }
 
+    /**
+     * Try one YouTube request with the saved cookie settings
+     */
+    public function testYoutube()
+    {
+        return response()->json($this->youtubeService->testAccess());
+    }
+
     public function checkDiskSpace()
     {
-        $free = $this->diskSpaceService->checkAvailableSpace();
-        $total = disk_total_space(config('youtube-converter.download_path')) / 1024 / 1024;
-        
         return response()->json([
-            'free_mb' => round($free, 2),
-            'total_mb' => round($total, 2),
-            'path' => config('youtube-converter.download_path')
+            'free_mb' => $this->diskSpaceService->checkAvailableSpace(),
+            'total_mb' => $this->diskSpaceService->getTotalSpace(),
+            'path' => Setting::downloadPath(),
         ]);
     }
 
@@ -75,7 +116,7 @@ class SettingsController extends Controller
         
         $ffmpeg = [
             'installed' => $this->audioConverterService->validateFfmpegInstalled(),
-            'version' => $this->audioConverterService->getFfmpegVersion() // Need to implement this if missing
+            'version' => $this->audioConverterService->getFfmpegVersion()
         ];
         
         return response()->json([

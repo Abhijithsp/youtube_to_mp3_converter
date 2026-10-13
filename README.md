@@ -1,5 +1,5 @@
 # 🎵 YouTube to MP3 Converter (Self-Hosted)
-A premium, self-hosted application to download and convert YouTube videos to high-quality MP3/FLAC audio files. Built with **Laravel 12**, **Vue.js 3**, and **Tailwind CSS**.
+A  self-hosted application to download and convert YouTube videos to high-quality MP3/FLAC audio files. Built with **Laravel 13**, **Vue.js 3**, and **Tailwind CSS**.
 
 
 ## 📚 Table of Contents
@@ -8,6 +8,7 @@ A premium, self-hosted application to download and convert YouTube videos to hig
 - [Full Setup](#full-setup)
 - [Run the App](#run-the-app)
 - [Scheduler Setup](#scheduler-setup)
+- [Running Tests](#testing)
 - [Health Checks & Troubleshooting](#health-checks)
 
 <a id="about"></a>
@@ -18,7 +19,7 @@ This project is a self-hosted YouTube audio converter built as a learning-driven
 ## ⚠️ Important Disclaimer & Terms of Use
 This project is a hobbyist experiment and is provided strictly for educational and demonstration purposes. Before exploring or implementing this codebase, please note the following:
 
-- **"Vibe-Coded" Architecture:** Approximately 90% of this codebase was generated using various AI models through "vibe-coding" (natural language prompting). While the logic is functional in the current demo, it has not undergone rigorous manual auditing, security hardening, or unit testing common in production-grade software.
+
 - **Use at Your Own Risk:** This software is free to use, but it is provided "as-is" without any warranties of any kind. By using this code, you acknowledge that you do so at your own discretion.
 - **Compliance Warning:** Use of this codebase may not align with Google’s (or other third-party) Service Policies. It is your responsibility to ensure that your specific implementation complies with the Terms of Service of any platforms or APIs you integrate with.
 - **No Developer Liability:** The creator of this project shall not be held responsible or liable for any damages, data loss, account suspensions, or financial losses incurred by individuals or businesses who choose to adapt this code into a live product.
@@ -116,13 +117,16 @@ If not recognized, add both binaries to your system `PATH` and restart your term
 
 ### 5) Optional app env overrides
 ```env
-YOUTUBE_DOWNLOAD_PATH=storage/app/downloads
+YOUTUBE_DOWNLOAD_PATH=storage/app/downloads   # absolute, or relative to the project folder
 MAX_PLAYLIST_SIZE=50
-MAX_CONCURRENT_DOWNLOADS=3
 RATE_LIMIT_SECONDS=2
 MIN_DISK_SPACE_MB=500
 YOUTUBE_JOB_TIMEOUT=600
 YOUTUBE_JOB_TRIES=3
+
+# If YouTube asks you to "Sign in to confirm you're not a bot" (also on the Settings page)
+YTDLP_COOKIES_FROM_BROWSER=firefox   # firefox, chrome, edge, brave, ... (Chromium browsers must be closed)
+YTDLP_COOKIES_FILE=                  # or an exported Netscape cookies.txt file
 ```
 
 <a id="run-the-app"></a>
@@ -204,6 +208,18 @@ npm run build
 4. Start conversion and monitor queue/progress.
 5. Download completed file from the app.
 
+<a id="testing"></a>
+## 🧪 Running Tests
+The test suite fakes `yt-dlp` and `ffmpeg`, so it runs offline in a few seconds (requires the `pdo_sqlite` PHP extension):
+```bash
+php artisan test
+```
+
+Real end-to-end downloads (needs network, `yt-dlp` and `ffmpeg`; YouTube may rate-limit repeated runs):
+```bash
+php artisan test --group=integration
+```
+
 <a id="health-checks"></a>
 ## 🩺 Health Checks & Troubleshooting
 ### Useful checks
@@ -221,6 +237,14 @@ php artisan optimize:clear
   php artisan queue:failed
   php artisan queue:retry all
   ```
+
+### "Sign in to confirm you're not a bot" / HTTP Error 429
+YouTube rate-limits computers that make many requests. Wait a few minutes, or let yt-dlp use your YouTube login:
+- **Settings → YouTube access**: pick the browser you are signed in with (Firefox works best; Chrome/Edge/Brave must be closed while downloading), or point to a `cookies.txt` file exported with a "Get cookies.txt" browser extension.
+- Use **Test connection** to check it. If cookies can't be read, downloads continue without them.
+
+### Downloads fail with "HTTP Error 403"
+YouTube changes often; update yt-dlp: `yt-dlp -U` (or `winget upgrade yt-dlp` / `pip install -U yt-dlp`, depending on how you installed it).
 
 ### `yt-dlp` / `ffmpeg` not found
 - Verify commands:

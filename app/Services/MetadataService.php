@@ -2,7 +2,9 @@
 
 namespace App\Services;
 
+use App\Support\ProcessOutput;
 use Exception;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Process;
 
@@ -18,46 +20,35 @@ class MetadataService
                 throw new Exception("File does not exist: {$filePath}");
             }
 
-            $commands = [];
+            $tagMap = [
+                'title' => 'title',
+                'artist' => 'artist',
+                'album' => 'album',
+                'year' => 'date',
+                'genre' => 'genre',
+            ];
 
-            if (!empty($metadata['title'])) {
-                $commands[] = sprintf('-metadata title="%s"', escapeshellarg($metadata['title']));
+            $metadataArgs = [];
+
+            foreach ($tagMap as $key => $tag) {
+                if (!empty($metadata[$key])) {
+                    $metadataArgs[] = '-metadata';
+                    $metadataArgs[] = "{$tag}={$metadata[$key]}";
+                }
             }
 
-            if (!empty($metadata['artist'])) {
-                $commands[] = sprintf('-metadata artist="%s"', escapeshellarg($metadata['artist']));
-            }
-
-            if (!empty($metadata['album'])) {
-                $commands[] = sprintf('-metadata album="%s"', escapeshellarg($metadata['album']));
-            }
-
-            if (!empty($metadata['year'])) {
-                $commands[] = sprintf('-metadata date="%s"', escapeshellarg($metadata['year']));
-            }
-
-            if (!empty($metadata['genre'])) {
-                $commands[] = sprintf('-metadata genre="%s"', escapeshellarg($metadata['genre']));
-            }
-
-            if (empty($commands)) {
+            if (empty($metadataArgs)) {
                 return true; // No metadata to add
             }
 
-            $ext = pathinfo($filePath, PATHINFO_EXTENSION);
-            $tempPath = pathinfo($filePath, PATHINFO_DIRNAME) . '/' . pathinfo($filePath, PATHINFO_FILENAME) . '_temp.' . $ext;
+            $tempPath = $this->tempPathFor($filePath);
 
-            $command = sprintf(
-                'ffmpeg -i "%s" %s -codec copy "%s" -y',
-                escapeshellarg($filePath),
-                implode(' ', $commands),
-                escapeshellarg($tempPath)
-            );
-
-            $result = Process::timeout(300)->run($command);
+            $result = Process::timeout(300)->run([
+                'ffmpeg', '-y', '-i', $filePath, ...$metadataArgs, '-codec', 'copy', $tempPath,
+            ]);
 
             if (!$result->successful()) {
-                throw new Exception('Metadata tagging failed: ' . $result->errorOutput());
+                throw new Exception('Metadata tagging failed: ' . ProcessOutput::error($result));
             }
 
             if (!file_exists($tempPath)) {
@@ -100,7 +91,7 @@ class MetadataService
     }
 
     /**
-     * Download and attach thumbnail to audio file
+     * Attach a thumbnail to the audio file as embedded cover art
      */
     public function attachThumbnail(string $audioPath, string $thumbnailPath): bool
     {
@@ -113,15 +104,27 @@ class MetadataService
                 throw new Exception("Thumbnail file does not exist: {$thumbnailPath}");
             }
 
-            $ext = pathinfo($audioPath, PATHINFO_EXTENSION);
-            $tempPath = pathinfo($audioPath, PATHINFO_DIRNAME) . '/' . pathinfo($audioPath, PATHINFO_FILENAME) . '_temp.' . $ext;
+            $tempPath = $this->tempPathFor($audioPath);
 
-            $command = sprintf(
-                'ffmpeg -i "%s" -i "%s" -map 0:0 -map 1:0 -c copy -id3v2_version 3 -metadata:s:v title="Album cover" -metadata:s:v comment="Cover (front)" "%s" -y',
-                escapeshellarg($audioPath),
-                escapeshellarg($thumbnailPath),
-                escapeshellarg($tempPath)
-            );
+            // YouTube thumbnails are often WebP, which MP3/FLAC cover art does not support,
+            // so the image is always re-encoded to JPEG instead of stream-copied.
+            $command = [
+                'ffmpeg', '-y',
+                '-i', $audioPath,
+                '-i', $thumbnailPath,
+                '-map', '0:a', '-map', '1:v',
+                '-c:a', 'copy',
+                '-c:v', 'mjpeg',
+                '-disposition:v', 'attached_pic',
+                '-metadata:s:v', 'title=Album cover',
+                '-metadata:s:v', 'comment=Cover (front)',
+            ];
+
+            if (strtolower(pathinfo($audioPath, PATHINFO_EXTENSION)) === 'mp3') {
+                $command = [...$command, '-id3v2_version', '3'];
+            }
+
+            $command[] = $tempPath;
 
             $result = Process::timeout(300)->run($command);
 
@@ -130,8 +133,13 @@ class MetadataService
                 Log::warning('Thumbnail attachment failed', [
                     'audio' => $audioPath,
                     'thumbnail' => $thumbnailPath,
-                    'error' => $result->errorOutput(),
+                    'error' => ProcessOutput::error($result),
                 ]);
+
+                if (file_exists($tempPath)) {
+                    @unlink($tempPath);
+                }
+
                 return false;
             }
 
@@ -164,13 +172,13 @@ class MetadataService
     public function downloadThumbnail(string $url, string $savePath): bool
     {
         try {
-            $imageData = file_get_contents($url);
-            
-            if ($imageData === false) {
-                throw new Exception('Failed to download thumbnail');
+            $response = Http::timeout(30)->get($url);
+
+            if (!$response->successful() || $response->body() === '') {
+                throw new Exception('Failed to download thumbnail (HTTP ' . $response->status() . ')');
             }
 
-            file_put_contents($savePath, $imageData);
+            file_put_contents($savePath, $response->body());
 
             return file_exists($savePath);
         } catch (Exception $e) {
@@ -181,5 +189,15 @@ class MetadataService
             ]);
             return false;
         }
+    }
+
+    /**
+     * Sibling temp file used while ffmpeg rewrites a file in place
+     */
+    private function tempPathFor(string $filePath): string
+    {
+        $ext = pathinfo($filePath, PATHINFO_EXTENSION);
+
+        return pathinfo($filePath, PATHINFO_DIRNAME) . '/' . pathinfo($filePath, PATHINFO_FILENAME) . '_temp.' . $ext;
     }
 }

@@ -52,27 +52,33 @@ class PlaylistController extends Controller
             'quality' => 'required|in:192,256,320',
         ]);
 
-        try {
-            return DB::transaction(function () use ($request) {
-                // Create Playlist record
-                $playlistId = $this->youtubeService->extractPlaylistId($request->url);
-                
-                if ($request->items) {
-                    $maxSize = \App\Models\Setting::get('max_playlist_size', config('youtube-converter.max_playlist_size', 50));
-                    if (count($request->items) > $maxSize) {
-                         throw new Exception("Playlist size exceeds limit of {$maxSize} videos.");
-                    }
-                }
+        $maxSize = (int) \App\Models\Setting::get('max_playlist_size', config('youtube-converter.max_playlist_size', 50));
+        if (count($request->items) > $maxSize) {
+            return response()->json([
+                'message' => "Playlist size exceeds limit of {$maxSize} videos.",
+            ], 422);
+        }
 
-                $playlist = Playlist::create([
-                    'youtube_playlist_id' => $playlistId,
+        // Channel/upload-list URLs have no list= parameter, so key them by URL instead
+        $playlistId = $this->youtubeService->extractPlaylistId($request->url)
+            ?? 'url-' . sha1($request->url);
+
+        try {
+            $playlist = DB::transaction(function () use ($request, $playlistId) {
+                // youtube_playlist_id is unique: importing the same playlist again
+                // replaces its item list instead of failing on the constraint
+                $playlist = Playlist::firstOrNew(['youtube_playlist_id' => $playlistId]);
+                $playlist->fill([
                     'title' => $request->title,
                     'total_videos' => count($request->items),
+                    'processed_videos' => 0,
                     'status' => 'pending',
-                ]);
+                ])->save();
+
+                $playlist->items()->delete();
 
                 // Create Item records
-                foreach ($request->items as $index => $item) {
+                foreach (array_values($request->items) as $index => $item) {
                     PlaylistItem::create([
                         'playlist_id' => $playlist->id,
                         'youtube_url' => $item['url'],
@@ -81,18 +87,20 @@ class PlaylistController extends Controller
                     ]);
                 }
 
-                // Dispatch Job
-                ProcessPlaylistJob::dispatch(
-                    $playlist, 
-                    $request->format, 
-                    (int) $request->quality
-                );
-
-                return response()->json([
-                    'message' => 'Playlist processing started',
-                    'playlist' => $playlist->load('items'),
-                ], 201);
+                return $playlist;
             });
+
+            // Dispatch after commit so a worker never picks the job up before the rows exist
+            ProcessPlaylistJob::dispatch(
+                $playlist,
+                $request->format,
+                (int) $request->quality
+            );
+
+            return response()->json([
+                'message' => 'Playlist processing started',
+                'playlist' => $playlist->load('items'),
+            ], 201);
 
         } catch (Exception $e) {
             return response()->json([
