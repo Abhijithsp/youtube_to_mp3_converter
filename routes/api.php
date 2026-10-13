@@ -24,6 +24,9 @@ Route::prefix('downloads')->group(function () {
     Route::get('/{download}/stream', [DownloadController::class, 'stream'])->name('downloads.stream');
 });
 
+// Search YouTube by text
+Route::get('/search', [DownloadController::class, 'search']);
+
 // Queue routes
 Route::prefix('queue')->group(function () {
     Route::get('/status', [App\Http\Controllers\QueueController::class, 'status']);
@@ -60,5 +63,8 @@ Route::prefix('settings')->group(function () {
     Route::get('/disk-space', [App\Http\Controllers\SettingsController::class, 'checkDiskSpace']);
     Route::get('/test-dependencies', [App\Http\Controllers\SettingsController::class, 'testDependencies']);
     Route::get('/test-youtube', [App\Http\Controllers\SettingsController::class, 'testYoutube']);
+    Route::get('/yt-dlp', [App\Http\Controllers\SettingsController::class, 'ytDlpVersion']);
+    Route::post('/yt-dlp/update', [App\Http\Controllers\SettingsController::class, 'updateYtDlp']);
+    Route::get('/setup-checks', [App\Http\Controllers\SettingsController::class, 'setupChecks']);
 });
 

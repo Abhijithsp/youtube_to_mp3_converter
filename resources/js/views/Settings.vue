@@ -86,6 +86,22 @@
         </p>
       </section>
 
+      <!-- Titles -->
+      <section class="card p-4">
+        <SectionTitle :icon="mdiFormatTitle" title="Titles" />
+        <label class="mt-3 flex cursor-pointer items-start gap-3">
+          <input v-model="form.clean_titles" type="checkbox" class="checkbox mt-0.5" />
+          <span>
+            <span class="block text-sm font-medium text-fg">Clean up titles</span>
+            <span class="block text-xs text-fg-muted">
+              Removes “(Official Music Video)”, “[HD]”, “| Lyrics” and similar from titles and file names, and
+              takes the artist from “Artist - Song” titles. “D-Sturb - LADY (Official Music Video)” becomes
+              “D-Sturb - LADY”, tagged as “LADY” by “D-Sturb”.
+            </span>
+          </span>
+        </label>
+      </section>
+
       <!-- Playlists -->
       <section class="card p-4">
         <SectionTitle :icon="mdiPlaylistMusicOutline" title="Playlists" />
@@ -104,33 +120,39 @@
         </div>
       </section>
 
-      <!-- System -->
+      <!-- yt-dlp -->
       <section class="card p-4">
-        <div class="flex items-center justify-between">
-          <SectionTitle :icon="mdiToolboxOutline" title="System" />
-          <button type="button" class="btn btn-text btn-sm -mr-2" :disabled="checkingSystem" @click="checkSystem">
-            <AppIcon :path="mdiRefresh" :size="18" :spin="checkingSystem" />
-            Recheck
+        <SectionTitle :icon="mdiYoutube" title="yt-dlp" />
+        <div class="mt-3 flex flex-wrap items-center gap-3">
+          <div class="min-w-0 flex-1">
+            <p class="text-sm text-fg">
+              <template v-if="ytdlp === null">Checking version…</template>
+              <template v-else-if="!ytdlp.installed">Not installed</template>
+              <template v-else>
+                Version <span class="font-medium tabular-nums">{{ ytdlp.installed }}</span>
+                <span v-if="ytdlp.update_available" class="chip ml-1 !bg-warning-soft !text-warning">{{ ytdlp.latest }} available</span>
+                <span v-else-if="ytdlp.latest" class="chip ml-1 !bg-success-soft !text-success">Latest</span>
+              </template>
+            </p>
+            <p class="text-xs text-fg-muted">YouTube changes often. Most “HTTP Error 403” failures are fixed by updating.</p>
+          </div>
+          <button type="button" class="btn btn-sm" :class="ytdlp?.update_available ? 'btn-filled' : 'btn-tonal'" :disabled="updating || !ytdlp?.installed" @click="updateYtDlp">
+            <AppIcon :path="updating ? mdiLoading : mdiUpdate" :size="18" :spin="updating" />
+            {{ updating ? 'Updating…' : ytdlp?.update_available ? 'Update now' : 'Check for update' }}
           </button>
         </div>
-        <ul class="mt-3 divide-y divide-line">
-          <li v-for="item in systemItems" :key="item.name" class="flex items-center gap-3 py-2.5">
-            <span
-              class="grid h-8 w-8 shrink-0 place-items-center rounded-full"
-              :class="item.ok === null ? 'bg-surface-2 text-fg-muted' : item.ok ? 'bg-success-soft text-success' : 'bg-danger-soft text-danger'"
-            >
-              <AppIcon :path="item.ok === null ? mdiHelpCircleOutline : item.ok ? mdiCheck : mdiClose" :size="18" />
-            </span>
-            <div class="min-w-0 flex-1">
-              <p class="text-sm font-medium text-fg">{{ item.name }}</p>
-              <p class="truncate text-xs text-fg-muted">{{ item.detail }}</p>
-            </div>
-          </li>
-        </ul>
-        <p class="mt-2 text-xs text-fg-muted">
-          Downloads failing with “HTTP Error 403” usually mean yt-dlp is outdated. Update it with
-          <code class="font-mono">yt-dlp -U</code> (or <code class="font-mono">winget upgrade yt-dlp</code>).
-        </p>
+        <div
+          v-if="updateResult"
+          class="mt-3 rounded-xl px-3 py-2.5 text-sm animate-fade-up"
+          :class="updateResult.ok ? 'bg-success-soft text-success' : 'bg-danger-soft text-danger'"
+        >
+          <p class="whitespace-pre-line break-words">{{ updateResult.message }}</p>
+        </div>
+      </section>
+
+      <!-- Setup checklist -->
+      <section class="card p-4">
+        <SetupChecklist ref="checklist" />
       </section>
     </div>
   </div>
@@ -140,23 +162,22 @@
 import {
   mdiAccessPointNetwork,
   mdiAlertCircle,
-  mdiCheck,
   mdiCheckCircle,
-  mdiClose,
   mdiContentSave,
   mdiCookieOutline,
   mdiFolderOutline,
-  mdiHelpCircleOutline,
+  mdiFormatTitle,
   mdiLoading,
   mdiPlaylistMusicOutline,
-  mdiRefresh,
-  mdiToolboxOutline,
+  mdiUpdate,
+  mdiYoutube,
 } from '@mdi/js';
 import { h } from 'vue';
 import AppIcon from '../components/AppIcon.vue';
 import LinearProgress from '../components/LinearProgress.vue';
 import PageHeader from '../components/PageHeader.vue';
-import { queueAPI, settingsAPI } from '../services/api';
+import SetupChecklist from '../components/SetupChecklist.vue';
+import { settingsAPI } from '../services/api';
 import { errorMessage, notify } from '../ui';
 
 const SectionTitle = {
@@ -174,7 +195,7 @@ const BROWSER_LABELS = { edge: 'Microsoft Edge', whale: 'Naver Whale' };
 
 export default {
   name: 'Settings',
-  components: { AppIcon, LinearProgress, PageHeader, SectionTitle },
+  components: { AppIcon, LinearProgress, PageHeader, SectionTitle, SetupChecklist },
   data() {
     return {
       form: {
@@ -184,30 +205,29 @@ export default {
         rate_limit_seconds: 2,
         ytdlp_cookies_browser: '',
         ytdlp_cookies_file: '',
+        clean_titles: true,
       },
       saved: '',
       browsers: [],
       errors: {},
       disk: { free_mb: 0, total_mb: 0 },
-      deps: null,
-      workerRunning: null,
+      ytdlp: null,
+      updateResult: null,
       youtubeCheck: null,
       saving: false,
+      updating: false,
       checkingYoutube: false,
-      checkingSystem: false,
       mdiAccessPointNetwork,
       mdiAlertCircle,
-      mdiCheck,
       mdiCheckCircle,
-      mdiClose,
       mdiContentSave,
       mdiCookieOutline,
       mdiFolderOutline,
-      mdiHelpCircleOutline,
+      mdiFormatTitle,
       mdiLoading,
       mdiPlaylistMusicOutline,
-      mdiRefresh,
-      mdiToolboxOutline,
+      mdiUpdate,
+      mdiYoutube,
     };
   },
   computed: {
@@ -218,30 +238,10 @@ export default {
       const { total_mb: total, free_mb: free } = this.disk;
       return total ? ((total - free) / total) * 100 : 0;
     },
-    systemItems() {
-      const d = this.deps;
-      return [
-        {
-          name: 'yt-dlp',
-          ok: d ? d.yt_dlp.installed : null,
-          detail: d ? (d.yt_dlp.installed ? `Version ${d.yt_dlp.version}` : 'Not found on PATH. Install it and restart the app.') : 'Checking…',
-        },
-        {
-          name: 'FFmpeg',
-          ok: d ? d.ffmpeg.installed : null,
-          detail: d ? (d.ffmpeg.installed ? `Version ${d.ffmpeg.version}` : 'Not found on PATH. Install it and restart the app.') : 'Checking…',
-        },
-        {
-          name: 'Queue worker',
-          ok: this.workerRunning,
-          detail: this.workerRunning === null ? 'Checking…' : this.workerRunning ? 'Running' : 'Not running. Start it with `composer dev` or `php artisan queue:work`.',
-        },
-      ];
-    },
   },
   mounted() {
     this.load();
-    this.checkSystem();
+    this.loadYtDlp();
   },
   methods: {
     browserLabel(b) {
@@ -299,16 +299,28 @@ export default {
       }
     },
 
-    async checkSystem() {
-      this.checkingSystem = true;
+    async loadYtDlp() {
       try {
-        const [deps, queue] = await Promise.all([settingsAPI.testDependencies(), queueAPI.getStatus()]);
-        this.deps = deps.data;
-        this.workerRunning = queue.data.worker_running;
+        const { data } = await settingsAPI.ytDlpVersion();
+        this.ytdlp = data;
+      } catch {
+        this.ytdlp = { installed: null, latest: null, update_available: false };
+      }
+    },
+
+    async updateYtDlp() {
+      this.updating = true;
+      this.updateResult = null;
+      try {
+        const { data } = await settingsAPI.updateYtDlp();
+        this.updateResult = data;
+        if (data.updated) notify(data.message, 'success');
+        await this.loadYtDlp();
+        this.$refs.checklist?.load(true);
       } catch (error) {
-        notify(errorMessage(error, 'System check failed'), 'error');
+        this.updateResult = { ok: false, message: errorMessage(error, 'The update failed') };
       } finally {
-        this.checkingSystem = false;
+        this.updating = false;
       }
     },
   },

@@ -60,7 +60,7 @@
         </div>
         <div>
           <span class="field-label">Bitrate</span>
-          <SegmentedControl v-model="quality" label="Bitrate" :options="qualityOptions" :disabled="format === 'flac'" />
+          <SegmentedControl v-model="quality" label="Bitrate" :options="qualityOptions" :disabled="format !== 'mp3'" />
         </div>
         <button type="button" class="btn btn-filled" :disabled="importing || !selectedCount" @click="importPlaylist">
           <AppIcon :path="importing ? mdiLoading : mdiPlaylistPlus" :size="18" :spin="importing" />
@@ -99,6 +99,16 @@
               />
               <p v-else class="text-xs text-fg-muted">{{ item.total_videos }} videos · {{ formatRelative(item.updated_at) }}</p>
             </div>
+            <button
+              v-if="item.processed_videos"
+              type="button"
+              class="icon-btn"
+              title="Play playlist"
+              aria-label="Play playlist"
+              @click="playPlaylist(item)"
+            >
+              <AppIcon :path="mdiPlayCircleOutline" />
+            </button>
             <button type="button" class="icon-btn" title="Remove playlist" aria-label="Remove playlist" @click="remove(item)">
               <AppIcon :path="mdiDeleteOutline" />
             </button>
@@ -115,6 +125,7 @@ import {
   mdiDeleteOutline,
   mdiLoading,
   mdiMagnify,
+  mdiPlayCircleOutline,
   mdiPlaylistMusic,
   mdiPlaylistMusicOutline,
   mdiPlaylistPlus,
@@ -124,6 +135,7 @@ import EmptyState from '../components/EmptyState.vue';
 import LinearProgress from '../components/LinearProgress.vue';
 import PageHeader from '../components/PageHeader.vue';
 import SegmentedControl from '../components/SegmentedControl.vue';
+import { playAll } from '../player';
 import { playlistAPI } from '../services/api';
 import { confirmDialog, errorMessage, formatDuration, formatRelative, notify } from '../ui';
 
@@ -144,6 +156,7 @@ export default {
       formatOptions: [
         { value: 'mp3', label: 'MP3' },
         { value: 'flac', label: 'FLAC' },
+        { value: 'wav', label: 'WAV' },
       ],
       qualityOptions: [
         { value: '192', label: '192k' },
@@ -154,6 +167,7 @@ export default {
       mdiDeleteOutline,
       mdiLoading,
       mdiMagnify,
+      mdiPlayCircleOutline,
       mdiPlaylistMusic,
       mdiPlaylistMusicOutline,
       mdiPlaylistPlus,
@@ -242,6 +256,19 @@ export default {
         this.imported = data.data;
       } catch {
         // Not critical for importing; leave the list as it is
+      }
+    },
+
+    async playPlaylist(item) {
+      try {
+        const { data } = await playlistAPI.get(item.id);
+        const downloads = [...data.items]
+          .sort((a, b) => a.position - b.position)
+          .map((i) => i.download)
+          .filter((d) => d && d.status === 'completed');
+        playAll(downloads);
+      } catch (error) {
+        notify(errorMessage(error, 'Could not load the playlist'), 'error');
       }
     },
 

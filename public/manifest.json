@@ -1,0 +1,25 @@
+{
+    "name": "YouTube to MP3 Converter",
+    "short_name": "YT to MP3",
+    "description": "Convert YouTube videos to MP3, FLAC or WAV with tags and cover art.",
+    "id": "/",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "display_override": ["window-controls-overlay", "standalone"],
+    "orientation": "any",
+    "background_color": "#e9edf5",
+    "theme_color": "#2f5dd3",
+    "categories": ["music", "utilities"],
+    "icons": [
+        { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+        { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+        { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+        { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+    ],
+    "shortcuts": [
+        { "name": "Download", "url": "/download", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+        { "name": "History", "url": "/history", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+        { "name": "Queue", "url": "/queue", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+    ]
+}

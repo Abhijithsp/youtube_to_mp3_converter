@@ -48,7 +48,7 @@ class PlaylistController extends Controller
             'items.*.url' => 'required|url',
             'items.*.title' => 'required|string',
             'items.*.id' => 'required|string',
-            'format' => 'required|in:mp3,flac',
+            'format' => 'required|in:mp3,flac,wav',
             'quality' => 'required|in:192,256,320',
         ]);
 

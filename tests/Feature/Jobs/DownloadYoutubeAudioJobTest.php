@@ -80,6 +80,10 @@ class DownloadYoutubeAudioJobTest extends TestCase
                 return Process::result();
             }
 
+            if ($command[0] === 'ffprobe') {
+                return json_encode(['format' => ['duration' => '60.0'], 'streams' => []]);
+            }
+
             throw new RuntimeException('Unexpected command: ' . implode(' ', $command));
         });
     }
@@ -116,7 +120,7 @@ class DownloadYoutubeAudioJobTest extends TestCase
         $this->runJob($download);
 
         $download->refresh();
-        $expectedFile = $this->downloadDir . '/D-Sturb - LADY (Official Music Video).mp3';
+        $expectedFile = $this->downloadDir . '/D-Sturb - LADY.mp3';
 
         $this->assertSame('completed', $download->status);
         $this->assertSame('Completed', $download->status_text);
@@ -125,8 +129,8 @@ class DownloadYoutubeAudioJobTest extends TestCase
         $this->assertNotNull($download->completed_at);
 
         // Bug: the title stayed "Fetching..." and the file was saved as fetching.mp3
-        $this->assertSame('D-Sturb - LADY (Official Music Video)', $download->title);
-        $this->assertSame('Q-dance Music', $download->artist);
+        $this->assertSame('D-Sturb - LADY', $download->title);
+        $this->assertSame('D-Sturb', $download->artist);
         $this->assertSame(177, $download->duration);
         $this->assertSame($expectedFile, $download->file_path);
         $this->assertFileExists($expectedFile);
@@ -140,8 +144,8 @@ class DownloadYoutubeAudioJobTest extends TestCase
         [$convert, $tag, $cover] = $this->ffmpegCalls();
         $this->assertContains('libmp3lame', $convert);
         $this->assertContains('320k', $convert);
-        $this->assertContains('title=D-Sturb - LADY (Official Music Video)', $tag);
-        $this->assertContains('artist=Q-dance Music', $tag);
+        $this->assertContains('title=LADY', $tag);
+        $this->assertContains('artist=D-Sturb', $tag);
         $this->assertContains('attached_pic', $cover);
 
         // Temp files are cleaned up
@@ -207,13 +211,13 @@ class DownloadYoutubeAudioJobTest extends TestCase
     public function test_existing_files_are_not_overwritten(): void
     {
         $this->fakeTools();
-        $this->makeAudioFile('D-Sturb - LADY (Official Music Video).mp3', 'older download');
+        $this->makeAudioFile('D-Sturb - LADY.mp3', 'older download');
         $download = Download::factory()->create(['title' => Download::PLACEHOLDER_TITLE]);
 
         $this->runJob($download);
 
-        $this->assertSame($this->downloadDir . '/D-Sturb - LADY (Official Music Video) (1).mp3', $download->fresh()->file_path);
-        $this->assertSame('older download', file_get_contents($this->downloadDir . '/D-Sturb - LADY (Official Music Video).mp3'));
+        $this->assertSame($this->downloadDir . '/D-Sturb - LADY (1).mp3', $download->fresh()->file_path);
+        $this->assertSame('older download', file_get_contents($this->downloadDir . '/D-Sturb - LADY.mp3'));
     }
 
     public function test_the_download_folder_from_settings_is_used(): void
@@ -377,6 +381,63 @@ class DownloadYoutubeAudioJobTest extends TestCase
         (new DownloadYoutubeAudioJob($second))->failed(new RuntimeException('gone'));
         $this->assertSame(2, $playlist->fresh()->processed_videos);
         $this->assertSame('completed', $playlist->fresh()->status);
+    }
+
+    public function test_titles_are_kept_raw_when_cleaning_is_off(): void
+    {
+        $this->fakeTools();
+        Setting::set('clean_titles', '0');
+        $download = Download::factory()->create(['title' => Download::PLACEHOLDER_TITLE, 'artist' => null]);
+
+        $this->runJob($download);
+
+        $this->assertSame('D-Sturb - LADY (Official Music Video)', $download->fresh()->title);
+    }
+
+    public function test_year_is_tagged(): void
+    {
+        $this->fakeTools(['upload_date' => '20190412'] + self::VIDEO_INFO);
+        $download = Download::factory()->create();
+
+        $this->runJob($download);
+
+        $this->assertSame(2019, $download->fresh()->year);
+        $this->assertContains('date=2019', $this->ffmpegCalls()[1]);
+    }
+
+    public function test_wav_downloads_skip_cover_art(): void
+    {
+        $this->fakeTools();
+        $download = Download::factory()->create(['format' => 'wav']);
+
+        $this->runJob($download);
+
+        $this->assertStringEndsWith('.wav', $download->fresh()->file_path);
+        $this->assertContains('pcm_s24le', $this->ffmpegCalls()[0]);
+        $this->assertFalse(collect($this->ffmpegCalls())->contains(fn ($command) => in_array('attached_pic', $command, true)));
+    }
+
+    public function test_trimmed_downloads_are_cut_and_report_their_new_length(): void
+    {
+        $this->fakeTools(overrides: [
+            'download' => function (array $command) {
+                // Already in the target container: without trimming it would just be moved
+                file_put_contents($command[array_search('-o', $command, true) + 1] . '.mp3', 'mp3-audio');
+
+                return Process::result();
+            },
+        ]);
+        $download = Download::factory()->create(['trim_start' => 10, 'trim_end' => 70, 'remove_silence' => true]);
+
+        $this->runJob($download);
+
+        $convert = $this->ffmpegCalls()[0];
+        $this->assertSame('10', $convert[array_search('-ss', $convert, true) + 1]);
+        $this->assertSame('70', $convert[array_search('-to', $convert, true) + 1]);
+        $this->assertContains('-af', $convert);
+        $this->assertSame('completed', $download->fresh()->status);
+        // Length measured with ffprobe after cutting
+        $this->assertSame(60, $download->fresh()->duration);
     }
 
     public function test_retry_settings_come_from_config(): void

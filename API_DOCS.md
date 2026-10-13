@@ -101,3 +101,36 @@ Returns installation status of `yt-dlp` and `ffmpeg`.
 
 **GET** `/api/settings/test-youtube`
 Makes one YouTube request with the saved cookie settings and returns `{ ok, message, cookies }`.
+
+**GET** `/api/settings/setup-checks`
+First-run checklist: `{ ready, checks: [{ key, label, required, ok, detail, fix }] }` for yt-dlp, FFmpeg, Deno, the queue worker, the download folder and disk space.
+
+**GET** `/api/settings/yt-dlp`
+Installed and latest yt-dlp version: `{ installed, latest, update_available }`.
+
+**POST** `/api/settings/yt-dlp/update`
+Updates yt-dlp (self-update, or winget when installed with winget). Returns `{ ok, updated, version, message, output }`.
+
+### Search
+
+**GET** `/api/search?q=song name`
+Searches YouTube (no API key needed). Returns `{ results: [{ id, title, url, channel, duration, views, thumbnail }] }`. Results are cached for 30 minutes.
+
+### Download options
+
+`POST /api/downloads` also accepts:
+
+```json
+{
+    "format": "mp3 | flac | wav",
+    "trim_start": 15,
+    "trim_end": 180,
+    "remove_silence": true,
+    "title": "D-Sturb - LADY",
+    "artist": "D-Sturb",
+    "year": 2019,
+    "genre": "Hardstyle"
+}
+```
+
+`POST /api/downloads/fetch-info` returns `suggested: { title, artist }`, a cleaned-up title and the artist parsed from it.

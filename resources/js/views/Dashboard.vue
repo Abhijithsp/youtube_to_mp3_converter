@@ -1,23 +1,30 @@
 <template>
   <div>
-    <PageHeader title="Home" subtitle="Paste a link to grab its audio, or check on recent downloads." />
+    <PageHeader title="Home" subtitle="Paste a link or search for a song, or check on recent downloads." />
+
+    <!-- First run / missing tools -->
+    <!-- Mounted after the stats: the check is slow and would hold up the page -->
+    <section v-if="!loading" v-show="showSetup" class="card mb-4 p-4">
+      <SetupChecklist only-problems dismissible @loaded="onSetupLoaded" @dismiss="dismissSetup" />
+    </section>
 
     <!-- Quick start -->
     <form class="card mb-4 flex flex-col gap-2 p-3 sm:flex-row sm:items-center" @submit.prevent="start">
       <div class="relative flex-1">
-        <AppIcon :path="mdiLink" :size="20" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-muted" />
+        <AppIcon :path="isUrl ? mdiLink : mdiMagnify" :size="20" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-muted" />
         <input
           v-model.trim="url"
-          type="url"
-          inputmode="url"
-          class="field !border-transparent !bg-surface-2 pl-10"
-          placeholder="Paste a YouTube video or playlist link"
-          aria-label="YouTube link"
+          type="text"
+          inputmode="search"
+          enterkeyhint="go"
+          class="field pl-10"
+          placeholder="Paste a YouTube link, or search for a song"
+          aria-label="YouTube link or search"
         />
       </div>
       <button type="submit" class="btn btn-filled" :disabled="!url">
-        <AppIcon :path="mdiArrowRight" :size="18" />
-        Continue
+        <AppIcon :path="isUrl ? mdiArrowRight : mdiMagnify" :size="18" />
+        {{ isUrl ? 'Continue' : 'Search' }}
       </button>
     </form>
 
@@ -75,7 +82,7 @@
               :class="isPlaying(download) && '!text-primary'"
               :title="isPlaying(download) ? 'Pause' : 'Play'"
               :aria-label="isPlaying(download) ? 'Pause' : 'Play'"
-              @click="toggle(download)"
+              @click="toggle(download, recent)"
             >
               <AppIcon :path="isPlaying(download) ? mdiPauseCircle : mdiPlayCircleOutline" />
             </button>
@@ -95,6 +102,7 @@ import {
   mdiArrowRight,
   mdiHarddisk,
   mdiLink,
+  mdiMagnify,
   mdiMusicBoxMultipleOutline,
   mdiMusicNoteOff,
   mdiPauseCircle,
@@ -106,20 +114,23 @@ import AppIcon from '../components/AppIcon.vue';
 import DownloadRow from '../components/DownloadRow.vue';
 import EmptyState from '../components/EmptyState.vue';
 import PageHeader from '../components/PageHeader.vue';
+import SetupChecklist from '../components/SetupChecklist.vue';
 import { isCurrent, player, toggle } from '../player';
 import { dashboardAPI } from '../services/api';
-import { errorMessage, notify } from '../ui';
+import { errorMessage, looksLikeYoutubeUrl, notify, readStorage, writeStorage } from '../ui';
 
 export default {
   name: 'Dashboard',
-  components: { AppIcon, DownloadRow, EmptyState, PageHeader },
+  components: { AppIcon, DownloadRow, EmptyState, PageHeader, SetupChecklist },
   data() {
     return {
       url: '',
       stats: {},
       loading: true,
+      showSetup: false,
       mdiArrowRight,
       mdiLink,
+      mdiMagnify,
       mdiMusicNoteOff,
       mdiPauseCircle,
       mdiPlayCircleOutline,
@@ -127,6 +138,9 @@ export default {
     };
   },
   computed: {
+    isUrl() {
+      return looksLikeYoutubeUrl(this.url);
+    },
     recent() {
       return this.stats.recent_downloads || [];
     },
@@ -161,9 +175,29 @@ export default {
       }
     },
     start() {
+      if (!this.isUrl) {
+        this.$router.push({ path: '/download', query: { q: this.url } });
+        return;
+      }
       // Playlist links (without a video) go to the playlist importer
       const isPlaylist = /[?&]list=/.test(this.url) && !/[?&]v=|youtu\.be\//.test(this.url);
       this.$router.push({ path: isPlaylist ? '/playlist' : '/download', query: { url: this.url } });
+    },
+
+    /**
+     * Show the checklist on first launch, and again whenever something new is
+     * missing (a hidden checklist stays hidden while the same items fail).
+     */
+    onSetupLoaded({ failing }) {
+      const seen = readStorage('setup-seen') === '1';
+      const dismissed = readStorage('setup-dismissed') ?? '';
+      this.showSetup = !seen || (failing.length > 0 && failing.join(',') !== dismissed);
+    },
+
+    dismissSetup(failing) {
+      writeStorage('setup-seen', '1');
+      writeStorage('setup-dismissed', failing.join(','));
+      this.showSetup = false;
     },
   },
 };
