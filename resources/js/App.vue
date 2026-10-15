@@ -122,6 +122,7 @@
     <PlayerBar />
     <SnackbarHost :raised="!!player.track" />
     <ConfirmDialog />
+    <LockScreen v-if="ui.locked" />
   </div>
 </template>
 
@@ -146,11 +147,12 @@ import {
 } from '@mdi/js';
 import AppIcon from './components/AppIcon.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
+import LockScreen from './components/LockScreen.vue';
 import PlayerBar from './components/PlayerBar.vue';
 import SnackbarHost from './components/SnackbarHost.vue';
 import WorkerBanner from './components/WorkerBanner.vue';
 import { player } from './player';
-import { queueAPI } from './services/api';
+import { lockAPI, queueAPI } from './services/api';
 import { installApp, toggleTheme, ui } from './ui';
 
 const NAV = [
@@ -164,7 +166,7 @@ const NAV = [
 
 export default {
   name: 'App',
-  components: { AppIcon, ConfirmDialog, PlayerBar, SnackbarHost, WorkerBanner },
+  components: { AppIcon, ConfirmDialog, LockScreen, PlayerBar, SnackbarHost, WorkerBanner },
   data() {
     return {
       ui,
@@ -189,6 +191,7 @@ export default {
     },
   },
   mounted() {
+    this.checkLock();
     this.refreshQueue();
     this.timer = setInterval(this.refreshQueue, 5000);
   },
@@ -201,7 +204,17 @@ export default {
     isActive(item) {
       return item.to === '/' ? this.$route.path === '/' : this.$route.path.startsWith(item.to);
     },
+    async checkLock() {
+      try {
+        const { data } = await lockAPI.status();
+        ui.lockEnabled = data.enabled;
+        ui.locked = !data.unlocked;
+      } catch {
+        // Older server or offline: API calls report problems themselves
+      }
+    },
     async refreshQueue() {
+      if (ui.locked) return;
       try {
         const { data } = await queueAPI.getStatus();
         // Rows in the jobs table: waiting jobs plus the ones a worker is running

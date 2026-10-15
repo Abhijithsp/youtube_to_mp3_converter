@@ -14,9 +14,15 @@
         <div class="mt-4 grid gap-4 sm:grid-cols-[1fr_12rem]">
           <div>
             <label for="download_path" class="field-label">Download folder</label>
-            <input id="download_path" v-model="form.download_path" class="field font-mono !text-sm" :class="errors.download_path && 'field-error'" />
+            <div class="flex gap-2">
+              <input id="download_path" v-model="form.download_path" class="field min-w-0 flex-1 font-mono !text-sm" :class="errors.download_path && 'field-error'" />
+              <button type="button" class="btn btn-tonal shrink-0 !h-auto" title="Browse folders" @click="pickingFolder = true">
+                <AppIcon :path="mdiFolderSearchOutline" :size="18" />
+                <span class="hidden sm:inline">Browse</span>
+              </button>
+            </div>
             <p v-if="errors.download_path" class="field-hint !text-danger">{{ errors.download_path }}</p>
-            <p v-else class="field-hint">Absolute path, or relative to the project folder.</p>
+            <p v-else class="field-hint">Any folder on {{ ui.lockEnabled ? 'the server' : 'this computer' }}, e.g. your Music folder or another drive.</p>
           </div>
           <div>
             <label for="min_disk" class="field-label">Keep free (MB)</label>
@@ -150,11 +156,35 @@
         </div>
       </section>
 
+      <!-- Access (password lock for servers) -->
+      <section class="card p-4">
+        <SectionTitle :icon="mdiShieldLockOutline" title="Access" />
+        <div class="mt-3 flex flex-wrap items-center gap-3">
+          <div class="min-w-0 flex-1">
+            <p class="text-sm text-fg">
+              Password lock
+              <span v-if="ui.lockEnabled" class="chip ml-1 !bg-success-soft !text-success">On</span>
+              <span v-else class="chip ml-1">Off</span>
+            </p>
+            <p class="text-xs text-fg-muted">
+              <template v-if="ui.lockEnabled">Only browsers that entered the password can use the app. Change it with <code class="font-mono">APP_PASSWORD</code> in <code class="font-mono">.env</code>.</template>
+              <template v-else>Fine on your own computer. Running it on a server? Set <code class="font-mono">APP_PASSWORD</code> in <code class="font-mono">.env</code> so only you can use it.</template>
+            </p>
+          </div>
+          <button v-if="ui.lockEnabled" type="button" class="btn btn-tonal btn-sm" @click="lockNow">
+            <AppIcon :path="mdiLockOutline" :size="18" />
+            Lock this device
+          </button>
+        </div>
+      </section>
+
       <!-- Setup checklist -->
       <section class="card p-4">
         <SetupChecklist ref="checklist" />
       </section>
     </div>
+
+    <FolderPicker :open="pickingFolder" :start="form.download_path" @close="pickingFolder = false" @select="chooseFolder" />
   </div>
 </template>
 
@@ -166,19 +196,23 @@ import {
   mdiContentSave,
   mdiCookieOutline,
   mdiFolderOutline,
+  mdiFolderSearchOutline,
   mdiFormatTitle,
   mdiLoading,
+  mdiLockOutline,
   mdiPlaylistMusicOutline,
+  mdiShieldLockOutline,
   mdiUpdate,
   mdiYoutube,
 } from '@mdi/js';
 import { h } from 'vue';
 import AppIcon from '../components/AppIcon.vue';
+import FolderPicker from '../components/FolderPicker.vue';
 import LinearProgress from '../components/LinearProgress.vue';
 import PageHeader from '../components/PageHeader.vue';
 import SetupChecklist from '../components/SetupChecklist.vue';
-import { settingsAPI } from '../services/api';
-import { errorMessage, notify } from '../ui';
+import { lockAPI, settingsAPI } from '../services/api';
+import { errorMessage, notify, ui } from '../ui';
 
 const SectionTitle = {
   name: 'SectionTitle',
@@ -195,7 +229,7 @@ const BROWSER_LABELS = { edge: 'Microsoft Edge', whale: 'Naver Whale' };
 
 export default {
   name: 'Settings',
-  components: { AppIcon, LinearProgress, PageHeader, SectionTitle, SetupChecklist },
+  components: { AppIcon, FolderPicker, LinearProgress, PageHeader, SectionTitle, SetupChecklist },
   data() {
     return {
       form: {
@@ -217,15 +251,20 @@ export default {
       saving: false,
       updating: false,
       checkingYoutube: false,
+      pickingFolder: false,
+      ui,
       mdiAccessPointNetwork,
       mdiAlertCircle,
       mdiCheckCircle,
       mdiContentSave,
       mdiCookieOutline,
       mdiFolderOutline,
+      mdiFolderSearchOutline,
       mdiFormatTitle,
       mdiLoading,
+      mdiLockOutline,
       mdiPlaylistMusicOutline,
+      mdiShieldLockOutline,
       mdiUpdate,
       mdiYoutube,
     };
@@ -283,6 +322,21 @@ export default {
         notify(errorMessage(error, 'Could not save settings'), 'error');
       } finally {
         this.saving = false;
+      }
+    },
+
+    chooseFolder(path) {
+      this.form.download_path = path;
+      this.pickingFolder = false;
+      delete this.errors.download_path;
+    },
+
+    async lockNow() {
+      try {
+        await lockAPI.lock();
+        ui.locked = true;
+      } catch (error) {
+        notify(errorMessage(error, 'Could not lock'), 'error');
       }
     },
 

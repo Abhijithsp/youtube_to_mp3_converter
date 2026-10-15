@@ -6,6 +6,7 @@ A  self-hosted application to download and convert YouTube videos to high-qualit
 - [About](#about)
 - [Important Disclaimer & Terms of Use](#disclaimer)
 - [Run with Docker](#docker)
+- [Run on a Server](#server)
 - [Full Setup](#full-setup)
 - [Run the App](#run-the-app)
 - [Scheduler Setup](#scheduler-setup)
@@ -67,6 +68,21 @@ Open **http://localhost:8000**. Converted files appear in the `downloads/` folde
 - Use another port: `APP_PORT=9000 docker compose up -d`
 - Update to a newer version of the app: `git pull && docker compose up -d --build`
 - If YouTube asks to *confirm you're not a bot*: export a `cookies.txt` from your browser (e.g. with a "Get cookies.txt" extension), put it in `docker-data/`, and uncomment `YTDLP_COOKIES_FILE` in `docker-compose.yml`. Reading browser cookies directly does not work inside Docker.
+
+<a id="server"></a>
+## 🌐 Run on a Server
+The app is made for your own use. On your computer it needs no login. To run it on a server (a VPS, a home server, a NAS) for yourself:
+
+1. **Set a password** in `.env` (or `docker-compose.yml`):
+   ```env
+   APP_PASSWORD=choose-a-long-password
+   ```
+   Every browser then asks for it once and remembers it for 30 days. Without it, anyone who finds the address can use your server to download and can browse its folders. To keep the password out of `.env` in plain text, run `php artisan app:hash-password` and paste the line it prints. In `docker-compose.yml`, write each `$` of a hash as `$$`.
+2. **Choose where files go**: *Settings → Storage → Browse* lists the folders on the server (drives, home, Music, the Docker `/downloads` volume) and can create a new one. Get files onto your phone or PC with the download button in History.
+3. **Use HTTPS** (e.g. Caddy, nginx + Let's Encrypt, or a Cloudflare/Tailscale tunnel) so the password is not sent in plain text. The app also works as an installable app (PWA) only over HTTPS.
+4. Run the queue worker and scheduler as services (see [Scheduler Setup](#scheduler-setup)); `php artisan dev` is meant for your own computer.
+
+To lock a device again, use *Settings → Access → Lock this device*. Changing `APP_PASSWORD` locks every device.
 
 <a id="full-setup"></a>
 ## 🚀 Full Setup
@@ -137,6 +153,7 @@ If not recognized, add both binaries to your system `PATH` and restart your term
 
 ### 5) Optional app env overrides
 ```env
+APP_PASSWORD=                                 # set one when running on a server (see Run on a Server)
 YOUTUBE_DOWNLOAD_PATH=storage/app/downloads   # absolute, or relative to the project folder
 MAX_PLAYLIST_SIZE=50
 RATE_LIMIT_SECONDS=2

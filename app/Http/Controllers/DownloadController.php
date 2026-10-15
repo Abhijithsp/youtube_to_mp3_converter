@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Download;
 use App\Jobs\DownloadYoutubeAudioJob;
 use App\Services\MetadataService;
+use App\Services\WaveformService;
 use App\Services\YouTubeService;
 use App\Models\Setting;
 use App\Support\FileName;
@@ -224,6 +225,29 @@ class DownloadController extends Controller
             'queued' => $queued,
             'skipped' => $skipped,
         ], count($queued) ? 201 : 422);
+    }
+
+    /**
+     * Waveform for the player's seek bar. Created on first request for downloads
+     * made before waveforms existed, then stored.
+     */
+    public function waveform(Download $download, WaveformService $waveformService): JsonResponse
+    {
+        if (!$download->waveform) {
+            if ($download->status !== 'completed' || !$download->file_path || !file_exists($download->file_path)) {
+                return response()->json(['waveform' => null, 'message' => 'The audio file is not available.'], 404);
+            }
+
+            $waveform = $waveformService->generate($download->file_path);
+
+            if (!$waveform) {
+                return response()->json(['waveform' => null, 'message' => 'Could not read the audio file.'], 422);
+            }
+
+            $download->update(['waveform' => $waveform]);
+        }
+
+        return response()->json(['waveform' => $download->waveform]);
     }
 
     /**

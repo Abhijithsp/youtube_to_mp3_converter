@@ -13,6 +13,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Password
+    |--------------------------------------------------------------------------
+    |
+    | Leave empty for local use. When the app runs on a server, set a password
+    | so only you can use it: the browser asks for it once and remembers it for
+    | 30 days. Plain text or a hash from `php artisan app:hash-password`.
+    |
+    */
+    'password' => env('APP_PASSWORD'),
+
+    /*
+    |--------------------------------------------------------------------------
     | YouTube Cookies
     |--------------------------------------------------------------------------
     |

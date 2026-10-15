@@ -1,4 +1,5 @@
 import axios from "axios";
+import { ui } from "../ui";
 
 const api = axios.create({
     baseURL: "/api",
@@ -7,6 +8,29 @@ const api = axios.create({
         Accept: "application/json",
     },
 });
+
+// A server with APP_PASSWORD answers 401 until this browser unlocks the app
+api.interceptors.response.use(undefined, (error) => {
+    if (error.response?.status === 401 && error.response.data?.locked) {
+        ui.locked = true;
+    }
+    return Promise.reject(error);
+});
+
+// Password lock (servers only)
+export const lockAPI = {
+    status() {
+        return api.get("/lock");
+    },
+
+    unlock(password) {
+        return api.post("/lock/unlock", { password });
+    },
+
+    lock() {
+        return api.post("/lock");
+    },
+};
 
 // Downloads
 export const downloadAPI = {
@@ -33,6 +57,11 @@ export const downloadAPI = {
     // Queue several links at once: { urls: [...], format, quality }
     bulk(data) {
         return api.post("/downloads/bulk", data);
+    },
+
+    // Loudness outline for the player's seek bar (created on first request if missing)
+    waveform(id) {
+        return api.get(`/downloads/${id}/waveform`);
     },
 
     // Edit tags of a finished download (re-tags and renames the file)
@@ -184,6 +213,15 @@ export const settingsAPI = {
 
   setupChecks(fresh = false) {
     return api.get('/settings/setup-checks', { params: fresh ? { fresh: 1 } : {} });
+  },
+
+  // Folders on the machine the app runs on (empty path: around the download folder)
+  folders(path = '') {
+    return api.get('/settings/folders', { params: path ? { path } : {} });
+  },
+
+  createFolder(path, name) {
+    return api.post('/settings/folders', { path, name });
   }
 };
 

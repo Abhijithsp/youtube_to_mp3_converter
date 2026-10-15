@@ -13,6 +13,7 @@ use App\Services\YouTubeService;
 use App\Services\AudioConverterService;
 use App\Services\MetadataService;
 use App\Services\DiskSpaceService;
+use App\Services\WaveformService;
 use App\Exceptions\DownloadCancelledException;
 use App\Exceptions\InsufficientDiskSpaceException;
 use App\Exceptions\YouTubeDownloadException;
@@ -20,7 +21,6 @@ use App\Exceptions\AudioConversionException;
 use App\Support\FileName;
 use App\Support\TrackTitle;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use Exception;
 use Throwable;
 
@@ -57,7 +57,8 @@ class DownloadYoutubeAudioJob implements ShouldQueue
         YouTubeService $youtubeService,
         AudioConverterService $audioConverter,
         MetadataService $metadataService,
-        DiskSpaceService $diskSpaceService
+        DiskSpaceService $diskSpaceService,
+        WaveformService $waveformService
     ): void
     {
         $tempFile = null;
@@ -323,14 +324,18 @@ class DownloadYoutubeAudioJob implements ShouldQueue
                 Log::warning('Metadata tagging failed', ['error' => $e->getMessage()]);
             }
 
-            $this->download->updateProgress(90);
+            $this->download->update(['progress' => 90, 'status_text' => 'Drawing waveform...']);
 
-            // Step 8: Mark as completed
+            // Step 8: Waveform for the player's seek bar (optional: null on failure)
+            $waveform = $waveformService->generate($finalFile);
+
+            // Step 9: Mark as completed
             $this->download->update([
                 'status' => 'completed',
                 'status_text' => 'Completed',
                 'file_path' => $finalFile,
                 'file_size' => filesize($finalFile),
+                'waveform' => $waveform,
                 'progress' => 100,
                 'error_message' => null,
                 'completed_at' => now(),

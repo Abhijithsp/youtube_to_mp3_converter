@@ -10,6 +10,9 @@ services:
     environment:
       APP_URL: "http://localhost:${APP_PORT:-8000}"
       APP_PORT: "${APP_PORT:-8000}"
+      # Running on a server? Set a password so only you can use the app
+      # (write each $ of a hashed password as $$):
+      # APP_PASSWORD: "choose-a-long-password"
       # Optional: a cookies.txt exported from your browser, if YouTube asks to
       # "confirm you're not a bot" (browser cookies cannot be read inside Docker).
       # Put the file in ./docker-data and uncomment:

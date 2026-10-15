@@ -8,6 +8,8 @@ export const ui = reactive({
     dialog: null, // { title, message, confirmLabel, danger, checkbox, checked, resolve }
     theme: document.documentElement.dataset.theme || 'light',
     installPrompt: null, // set when the browser allows installing the app
+    lockEnabled: false, // APP_PASSWORD is set on the server
+    locked: false, // ...and this browser has not entered it yet
 });
 
 export async function installApp() {

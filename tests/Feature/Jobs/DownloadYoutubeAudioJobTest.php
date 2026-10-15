@@ -9,6 +9,7 @@ use App\Models\Download;
 use App\Models\Playlist;
 use App\Models\PlaylistItem;
 use App\Models\Setting;
+use App\Services\WaveformService;
 use Illuminate\Contracts\Queue\Job;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Process\PendingProcess;
@@ -68,6 +69,13 @@ class DownloadYoutubeAudioJobTest extends TestCase
                 file_put_contents($output . '.webm', 'webm-audio');
 
                 return Process::result();
+            }
+
+            // Waveform: raw 16-bit PCM on stdout (a rising tone)
+            if ($command[0] === 'ffmpeg' && in_array('s16le', $command, true)) {
+                return isset($overrides['waveform'])
+                    ? $overrides['waveform']($command)
+                    : Process::result(output: pack('v*', ...range(0, 32000, 50)));
             }
 
             if ($command[0] === 'ffmpeg') {
@@ -381,6 +389,33 @@ class DownloadYoutubeAudioJobTest extends TestCase
         (new DownloadYoutubeAudioJob($second))->failed(new RuntimeException('gone'));
         $this->assertSame(2, $playlist->fresh()->processed_videos);
         $this->assertSame('completed', $playlist->fresh()->status);
+    }
+
+    public function test_a_waveform_is_stored_when_the_download_finishes(): void
+    {
+        $this->fakeTools();
+        $download = Download::factory()->create();
+
+        $this->runJob($download);
+
+        $waveform = $download->fresh()->waveform;
+        $this->assertCount(WaveformService::POINTS, $waveform);
+        // The fake tone rises, so the outline does too
+        $this->assertLessThan(end($waveform), $waveform[0]);
+        $this->assertSame(100, max($waveform));
+    }
+
+    public function test_a_failed_waveform_does_not_fail_the_download(): void
+    {
+        $this->fakeTools(overrides: [
+            'waveform' => fn () => Process::result(errorOutput: 'Invalid data found', exitCode: 1),
+        ]);
+        $download = Download::factory()->create();
+
+        $this->runJob($download);
+
+        $this->assertSame('completed', $download->fresh()->status);
+        $this->assertNull($download->fresh()->waveform);
     }
 
     public function test_titles_are_kept_raw_when_cleaning_is_off(): void

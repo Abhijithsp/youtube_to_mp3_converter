@@ -76,7 +76,17 @@
             </div>
             <div class="flex w-full items-center gap-2">
               <span class="w-10 text-right text-[11px] tabular-nums text-fg-muted">{{ formatTime(player.currentTime) }}</span>
+              <WaveformSeek
+                v-if="peaks"
+                class="flex-1"
+                :peaks="peaks"
+                :current-time="player.currentTime"
+                :duration="duration"
+                :height="30"
+                @seek="seek"
+              />
               <input
+                v-else
                 class="range flex-1"
                 type="range"
                 min="0"
@@ -139,7 +149,17 @@
         <!-- Seek (phone) -->
         <div class="mt-1 flex items-center gap-2 md:hidden">
           <span class="text-[10px] tabular-nums text-fg-muted">{{ formatTime(player.currentTime) }}</span>
+          <WaveformSeek
+            v-if="peaks"
+            class="flex-1"
+            :peaks="peaks"
+            :current-time="player.currentTime"
+            :duration="duration"
+            :height="26"
+            @seek="seek"
+          />
           <input
+            v-else
             class="range flex-1"
             type="range"
             min="0"
@@ -179,6 +199,8 @@ import {
   mdiVolumeOff,
 } from '@mdi/js';
 import AppIcon from './AppIcon.vue';
+import WaveformSeek from './WaveformSeek.vue';
+import { downloadAPI } from '../services/api';
 import {
   cycleRepeat,
   hasNext,
@@ -196,10 +218,12 @@ import {
 
 export default {
   name: 'PlayerBar',
-  components: { AppIcon },
+  components: { AppIcon, WaveformSeek },
   data() {
     return {
       player,
+      // Waveforms fetched for tracks that came without one: id → peaks, or false if unavailable
+      fetchedWaveforms: {},
       mdiClose,
       mdiLoading,
       mdiMusicNote,
@@ -222,6 +246,11 @@ export default {
     duration() {
       return player.duration || player.track?.duration || 0;
     },
+    peaks() {
+      const id = player.track?.id;
+      const peaks = player.track?.waveform || this.fetchedWaveforms[id];
+      return Array.isArray(peaks) && peaks.length ? peaks : null;
+    },
     percent() {
       return this.duration ? Math.min(100, (player.currentTime / this.duration) * 100) : 0;
     },
@@ -233,6 +262,23 @@ export default {
       if (player.volume < 0.35) return mdiVolumeLow;
       if (player.volume < 0.7) return mdiVolumeMedium;
       return mdiVolumeHigh;
+    },
+  },
+  watch: {
+    // Downloads made before waveforms existed get one created on first play
+    'player.track': {
+      async handler(track) {
+        if (!track?.id || track.waveform || track.id in this.fetchedWaveforms) return;
+
+        this.fetchedWaveforms = { ...this.fetchedWaveforms, [track.id]: false };
+        try {
+          const { data } = await downloadAPI.waveform(track.id);
+          this.fetchedWaveforms = { ...this.fetchedWaveforms, [track.id]: data.waveform || false };
+        } catch {
+          // Keep the plain seek bar for this track
+        }
+      },
+      immediate: true,
     },
   },
   methods: {
