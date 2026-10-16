@@ -6,8 +6,13 @@ use App\Models\Download;
 use App\Jobs\DownloadYoutubeAudioJob;
 use App\Services\MetadataService;
 use App\Services\WaveformService;
+use App\Services\AudioConverterService;
+use App\Services\LyricsService;
+use App\Support\ProcessOutput;
+use Illuminate\Support\Facades\Process;
 use App\Services\YouTubeService;
 use App\Models\Setting;
+use App\Support\FileExplorer;
 use App\Support\FileName;
 use App\Support\TrackTitle;
 use Illuminate\Http\Request;
@@ -16,6 +21,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class DownloadController extends Controller
@@ -29,6 +35,13 @@ class DownloadController extends Controller
      * Most songs in one ZIP download
      */
     private const ZIP_LIMIT = 500;
+
+    /**
+     * Ringtone length in seconds (iPhone allows up to 40)
+     */
+    private const RINGTONE_MIN = 3;
+
+    private const RINGTONE_MAX = 40;
 
     public function __construct(
         private YouTubeService $youtubeService
@@ -79,11 +92,16 @@ class DownloadController extends Controller
             'trim_start' => 'nullable|integer|min:0',
             'trim_end' => 'nullable|integer|min:1',
             'remove_silence' => 'nullable|boolean',
+            'normalize_volume' => 'nullable|boolean',
+            'split_chapters' => 'nullable|boolean',
         ]);
 
         $validator->after(function ($validator) use ($request) {
             if ($request->filled('trim_end') && (int) $request->trim_end <= (int) $request->trim_start) {
                 $validator->errors()->add('trim_end', 'The end time must be after the start time.');
+            }
+            if ($request->boolean('split_chapters') && ((int) $request->trim_start > 0 || $request->filled('trim_end'))) {
+                $validator->errors()->add('split_chapters', 'Splitting into chapters works on the whole video. Remove the trim first.');
             }
         });
 
@@ -113,7 +131,8 @@ class DownloadController extends Controller
                 ], 422);
             }
 
-            $edited = $request->filled('trim_start') || $request->filled('trim_end') || $request->boolean('remove_silence');
+            $edited = $request->filled('trim_start') || $request->filled('trim_end') || $request->boolean('remove_silence')
+                || $request->boolean('normalize_volume') || $request->boolean('split_chapters');
 
             // Edited (trimmed) downloads are always made fresh
             $existing = $edited ? null : $this->findExisting($videoId, $request->format, (string) $request->quality);
@@ -141,6 +160,8 @@ class DownloadController extends Controller
                 'trim_start' => $request->filled('trim_start') && (int) $request->trim_start > 0 ? (int) $request->trim_start : null,
                 'trim_end' => $request->filled('trim_end') ? (int) $request->trim_end : null,
                 'remove_silence' => $request->boolean('remove_silence'),
+                'normalize_volume' => $request->boolean('normalize_volume'),
+                'split_chapters' => $request->boolean('split_chapters'),
                 'status' => 'pending',
             ]);
 
@@ -297,6 +318,11 @@ class DownloadController extends Controller
                 'genre' => $tags['genre'],
             ], clearEmpty: true);
 
+            // Rewriting the tags drops the lyrics frame: put the lyrics back
+            if ($download->lyrics) {
+                $metadataService->writeLyrics($path, $download->lyrics);
+            }
+
             if ($request->boolean('rename', true)) {
                 $path = $this->renameToTitle($path, $tags['title'], $download->format);
             }
@@ -370,6 +396,8 @@ class DownloadController extends Controller
             ->whereNull('trim_start')
             ->whereNull('trim_end')
             ->where('remove_silence', false)
+            ->where('normalize_volume', false)
+            ->whereNull('chapter_index')
             ->latest()
             ->get()
             ->first(fn (Download $download) => $download->file_path && file_exists($download->file_path));
@@ -574,6 +602,112 @@ class DownloadController extends Controller
             $this->downloadFilename($download),
             ['Content-Type' => $mimeTypes[$download->format] ?? 'application/octet-stream']
         );
+    }
+
+    /**
+     * Lyrics for the player. Looked up once on first request (downloads made before
+     * lyrics existed, or when the lookup failed); ?refresh=1 looks again.
+     */
+    public function lyrics(Request $request, Download $download, LyricsService $lyricsService, MetadataService $metadataService): JsonResponse
+    {
+        if ($download->status !== 'completed') {
+            return response()->json(['message' => 'The download has not finished.'], 404);
+        }
+
+        if ($download->lyrics_status === null || $request->boolean('refresh')) {
+            $fields = $lyricsService->lookup($download);
+
+            if (!$fields && $download->lyrics_status === null) {
+                return response()->json(['message' => 'The lyrics service could not be reached. Try again later.'], 503);
+            }
+
+            if ($fields) {
+                $download->update($fields);
+
+                // Best effort: a file that is playing may be locked (Windows); the
+                // lyrics are in the database either way
+                if ($download->lyrics && $download->file_path && is_file($download->file_path)
+                    && $metadataService->writeLyrics($download->file_path, $download->lyrics)) {
+                    clearstatcache(true, $download->file_path);
+                    $download->update(['file_size' => filesize($download->file_path)]);
+                }
+            }
+        }
+
+        return response()->json([
+            'status' => $download->lyrics_status,
+            'lyrics' => $download->lyrics,
+            'synced' => $download->synced_lyrics,
+        ]);
+    }
+
+    /**
+     * Open the file's folder on this computer, with the file selected (History → folder button)
+     */
+    public function reveal(Request $request, Download $download, FileExplorer $explorer): JsonResponse
+    {
+        if (!FileExplorer::available($request)) {
+            return response()->json(['message' => 'Folders can only be opened from a browser on the computer running AudioFetch.'], 403);
+        }
+
+        if (!$download->file_path || !is_file($download->file_path)) {
+            return response()->json(['message' => 'The file is no longer on disk. It may have been moved or deleted.'], 404);
+        }
+
+        $explorer->reveal($download->file_path);
+
+        return response()->json(['message' => 'Opened the folder']);
+    }
+
+    /**
+     * A ringtone from part of a song, saved as MP3 (History → Make ringtone)
+     */
+    public function ringtone(Request $request, Download $download, AudioConverterService $converter): BinaryFileResponse|JsonResponse
+    {
+        $data = $request->validate([
+            'start' => 'required|numeric|min:0',
+            'length' => 'required|numeric|min:' . self::RINGTONE_MIN . '|max:' . self::RINGTONE_MAX,
+            'fade' => 'nullable|boolean',
+        ]);
+
+        if ($download->status !== 'completed' || !$download->file_path || !is_file($download->file_path)) {
+            return response()->json(['message' => 'The audio file is not available.'], 404);
+        }
+
+        $start = (float) $data['start'];
+        $length = (float) $data['length'];
+
+        if ($download->duration) {
+            if ($start + 1 > $download->duration) {
+                throw ValidationException::withMessages(['start' => 'The start is after the end of the song.']);
+            }
+            $length = min($length, $download->duration - $start);
+        }
+
+        $tempDir = storage_path('app/temp');
+        if (!is_dir($tempDir)) {
+            mkdir($tempDir, 0755, true);
+        }
+        $output = $tempDir . DIRECTORY_SEPARATOR . 'ringtone_' . Str::random(16) . '.mp3';
+
+        $result = Process::timeout(120)->run($converter->ringtoneCommand(
+            $download->file_path,
+            $output,
+            $start,
+            $length,
+            $request->boolean('fade', true),
+            ['title' => TrackTitle::songTitle($download->title, $download->artist) . ' (Ringtone)', 'artist' => $download->artist]
+        ));
+
+        if (!$result->successful() || !is_file($output)) {
+            @unlink($output);
+
+            return response()->json(['message' => 'Could not make the ringtone: ' . ProcessOutput::error($result)], 500);
+        }
+
+        $name = pathinfo($this->downloadFilename($download), PATHINFO_FILENAME);
+
+        return response()->download($output, "{$name} (Ringtone).mp3", ['Content-Type' => 'audio/mpeg'])->deleteFileAfterSend();
     }
 
     /**

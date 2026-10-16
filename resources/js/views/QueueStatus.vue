@@ -138,7 +138,7 @@ export default {
   },
   mounted() {
     this.refresh();
-    this.timer = setInterval(this.refresh, 1500);
+    this.timer = setInterval(this.refresh, 1000);
   },
   beforeUnmount() {
     clearInterval(this.timer);

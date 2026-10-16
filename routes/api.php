@@ -36,6 +36,9 @@ Route::middleware(RequireAppPassword::class)->group(function () {
         Route::post('/{download}/retry', [DownloadController::class, 'retry']);
         Route::post('/{download}/cancel', [DownloadController::class, 'cancel']);
         Route::get('/{download}/waveform', [DownloadController::class, 'waveform']);
+        Route::get('/{download}/lyrics', [DownloadController::class, 'lyrics']);
+        Route::get('/{download}/ringtone', [DownloadController::class, 'ringtone']);
+        Route::post('/{download}/reveal', [DownloadController::class, 'reveal']);
         Route::get('/{download}/stream', [DownloadController::class, 'stream'])->name('downloads.stream');
     });
 

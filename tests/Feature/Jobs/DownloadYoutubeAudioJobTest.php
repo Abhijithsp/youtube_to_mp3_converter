@@ -489,4 +489,113 @@ class DownloadYoutubeAudioJobTest extends TestCase
     {
         $this->assertTrue((new DownloadYoutubeAudioJob(Download::factory()->create()))->deleteWhenMissingModels);
     }
+
+    public function test_volume_levelling_adds_the_loudness_filter(): void
+    {
+        $this->fakeTools();
+        $download = Download::factory()->create(['normalize_volume' => true]);
+
+        $this->runJob($download);
+
+        $convert = $this->ffmpegCalls()[0];
+        $this->assertStringContainsString('loudnorm=I=-14', $convert[array_search('-af', $convert, true) + 1]);
+        // loudnorm would resample to 192 kHz without an explicit rate
+        $this->assertSame('44100', $convert[array_search('-ar', $convert, true) + 1]);
+        $this->assertSame('completed', $download->fresh()->status);
+    }
+
+    public function test_lyrics_are_looked_up_stored_and_saved_into_the_file(): void
+    {
+        config(['youtube-converter.fetch_lyrics' => true]);
+        Http::fake([
+            'i.ytimg.com/*' => Http::response('thumbnail-bytes'),
+            'lrclib.net/api/get*' => Http::response([
+                'plainLyrics' => "First line\nSecond line",
+                'syncedLyrics' => "[00:01.00] First line\n[00:03.50] Second line",
+                'instrumental' => false,
+            ]),
+        ]);
+        $this->fakeTools();
+        $download = Download::factory()->create(['title' => 'D-Sturb - LADY', 'artist' => 'D-Sturb', 'duration' => 177]);
+
+        $this->runJob($download);
+
+        $download->refresh();
+        $this->assertSame('found', $download->lyrics_status);
+        $this->assertSame("First line\nSecond line", $download->lyrics);
+        $this->assertStringContainsString('[00:03.50] Second line', $download->synced_lyrics);
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'lrclib.net/api/get')
+            && $request['track_name'] === 'LADY' && $request['artist_name'] === 'D-Sturb' && (int) $request['duration'] === 177);
+    }
+
+    public function test_lyrics_can_be_switched_off(): void
+    {
+        config(['youtube-converter.fetch_lyrics' => true]);
+        Setting::set('fetch_lyrics', '0');
+        $this->fakeTools();
+        $download = Download::factory()->create();
+
+        $this->runJob($download);
+
+        $this->assertNull($download->fresh()->lyrics_status);
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), 'lrclib'));
+    }
+
+    public function test_a_video_with_chapters_is_split_into_tracks(): void
+    {
+        $this->fakeTools(self::VIDEO_INFO + ['chapters' => [
+            ['start_time' => 0, 'end_time' => 60, 'title' => 'Intro'],
+            ['start_time' => 60, 'end_time' => 120.5, 'title' => 'Main: Part'],
+            ['start_time' => 120.5, 'end_time' => 177, 'title' => 'Outro'],
+        ]]);
+        $download = Download::factory()->create([
+            'youtube_url' => 'https://www.youtube.com/watch?v=TpHlTBRLHgs',
+            'title' => 'Big Mix',
+            'artist' => 'D-Sturb',
+            'split_chapters' => true,
+        ]);
+
+        $this->runJob($download);
+
+        $folder = $this->downloadDir . DIRECTORY_SEPARATOR . 'Big Mix';
+        $tracks = Download::orderBy('chapter_index')->get();
+
+        $this->assertCount(3, $tracks);
+        $this->assertSame([1, 2, 3], $tracks->pluck('chapter_index')->all());
+        $this->assertSame(['Intro', 'Main: Part', 'Outro'], $tracks->pluck('title')->all());
+        $this->assertSame(['Big Mix'], $tracks->pluck('album')->unique()->values()->all());
+        $this->assertSame([60, 61, 57], $tracks->pluck('duration')->all());
+        $this->assertSame(['completed'], $tracks->pluck('status')->unique()->values()->all());
+
+        // The original download became track 1; files sit in a folder named after the video
+        $first = $download->fresh();
+        $this->assertSame(1, $first->chapter_index);
+        $this->assertSame('Completed: split into 3 tracks', $first->status_text);
+        $this->assertSame($folder . DIRECTORY_SEPARATOR . '01 - Intro.mp3', $first->file_path);
+        $this->assertFileExists($folder . DIRECTORY_SEPARATOR . '02 - Main Part.mp3');
+        $this->assertFileExists($folder . DIRECTORY_SEPARATOR . '03 - Outro.mp3');
+        $this->assertNotNull($tracks[2]->waveform);
+
+        // The whole-video file is removed after splitting
+        $this->assertFileDoesNotExist($this->downloadDir . '/Big Mix.mp3');
+
+        $cut = collect($this->ffmpegCalls())->first(fn ($command) => in_array('track=2/3', $command, true));
+        $this->assertSame('60', $cut[array_search('-ss', $cut, true) + 1]);
+        $this->assertSame('120.5', $cut[array_search('-to', $cut, true) + 1]);
+        $this->assertContains('copy', $cut);
+        $this->assertContains('title=Main: Part', $cut);
+    }
+
+    public function test_a_video_without_chapters_is_kept_whole(): void
+    {
+        $this->fakeTools();
+        $download = Download::factory()->create(['title' => 'Single Song', 'split_chapters' => true]);
+
+        $this->runJob($download);
+
+        $this->assertSame(1, Download::count());
+        $this->assertSame('Completed', $download->fresh()->status_text);
+        $this->assertNull($download->fresh()->chapter_index);
+        $this->assertFileExists($this->downloadDir . '/Single Song.mp3');
+    }
 }

@@ -35,6 +35,7 @@ class SettingsController extends Controller
             'ytdlp_cookies_browser' => (string) config('youtube-converter.cookies_from_browser'),
             'ytdlp_cookies_file' => (string) config('youtube-converter.cookies_file'),
             'clean_titles' => (bool) config('youtube-converter.clean_titles', true),
+            'fetch_lyrics' => (bool) config('youtube-converter.fetch_lyrics', true),
         ];
     }
 
@@ -67,6 +68,7 @@ class SettingsController extends Controller
             'ytdlp_cookies_browser' => ['sometimes', 'nullable', Rule::in(YouTubeService::COOKIE_BROWSERS)],
             'ytdlp_cookies_file' => 'sometimes|nullable|string',
             'clean_titles' => 'sometimes|boolean',
+            'fetch_lyrics' => 'sometimes|boolean',
         ]);
 
         $path = Setting::absolutePath(rtrim($data['download_path'], '/\\'));

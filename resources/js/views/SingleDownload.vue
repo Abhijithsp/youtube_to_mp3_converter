@@ -212,6 +212,7 @@
               v-model.trim="trim.start"
               class="field tabular-nums"
               :class="trimError && 'field-error'"
+              :disabled="splitChapters"
               inputmode="numeric"
               placeholder="0:00"
             />
@@ -223,6 +224,7 @@
               v-model.trim="trim.end"
               class="field tabular-nums"
               :class="trimError && 'field-error'"
+              :disabled="splitChapters"
               inputmode="numeric"
               :placeholder="formatDuration(video.duration) || 'end'"
             />
@@ -237,7 +239,33 @@
           Times as m:ss (e.g. 0:15). Silence removal cuts quiet parts at the start and end.
           <template v-if="keptLength"> The file will be about {{ formatDuration(keptLength) }} long.</template>
         </p>
+
+        <label class="mt-3 flex cursor-pointer items-start gap-3 text-sm text-fg">
+          <input v-model="normalizeVolume" type="checkbox" class="checkbox mt-0.5" />
+          <span>
+            Even out volume
+            <span class="block text-xs text-fg-muted">Plays at the same loudness as your other songs (no more quiet or extra loud tracks).</span>
+          </span>
+        </label>
       </Disclosure>
+
+      <!-- Chapters: one file per track -->
+      <div v-if="chapters.length" class="rounded-xl bg-surface-2 p-3" style="box-shadow: var(--md-inset)">
+        <label class="flex cursor-pointer items-start gap-3 text-sm text-fg">
+          <input v-model="splitChapters" type="checkbox" class="checkbox mt-0.5" />
+          <span class="min-w-0 flex-1">
+            <span class="font-medium">Split into {{ chapters.length }} tracks</span>
+            <span class="block text-xs text-fg-muted">This video has chapters. Each one becomes its own file, saved together in a folder named after the video.</span>
+          </span>
+        </label>
+        <ol v-if="splitChapters" class="mt-2 max-h-44 space-y-0.5 overflow-y-auto pl-8 text-xs text-fg-muted">
+          <li v-for="(chapter, i) in chapters" :key="i" class="flex gap-2">
+            <span class="w-6 shrink-0 tabular-nums">{{ i + 1 }}.</span>
+            <span class="min-w-0 flex-1 truncate text-fg">{{ chapter.title }}</span>
+            <span class="shrink-0 tabular-nums">{{ formatDuration(chapter.end - chapter.start) }}</span>
+          </li>
+        </ol>
+      </div>
 
       <!-- Tags -->
       <Disclosure v-model="showTags" label="Edit tags" :badge="tagsSummary">
@@ -274,6 +302,9 @@
     <!-- Progress / result -->
     <section v-if="download" class="card mt-3 overflow-hidden animate-fade-up">
       <DownloadRow :download="download" />
+      <p v-if="download.status === 'completed' && download.chapter_index" class="border-t border-line px-4 py-2.5 text-sm text-fg">
+        {{ download.status_text }}. <router-link to="/history" class="font-medium text-primary hover:underline">See all tracks in History</router-link>
+      </p>
 
       <div class="flex flex-wrap justify-end gap-2 border-t border-line px-4 py-3">
         <button v-if="isActive" type="button" class="btn btn-outlined btn-sm" @click="cancel">
@@ -330,7 +361,7 @@ import PageHeader from '../components/PageHeader.vue';
 import SegmentedControl from '../components/SegmentedControl.vue';
 import { isCurrent, player, toggle } from '../player';
 import { downloadAPI, searchAPI } from '../services/api';
-import { errorMessage, extractYoutubeLinks, formatDuration, looksLikeYoutubeUrl, notify, parseTime, YOUTUBE_URL } from '../ui';
+import { errorMessage, extractYoutubeLinks, formatDuration, looksLikeYoutubeUrl, notify, parseTime, readStorage, writeStorage, YOUTUBE_URL } from '../ui';
 
 export default {
   name: 'SingleDownload',
@@ -359,6 +390,9 @@ export default {
       tags: { title: '', artist: '', album: '', year: null, genre: '' },
       trim: { start: '', end: '' },
       removeSilence: false,
+      // Remembered per device: most people want it always on or always off
+      normalizeVolume: readStorage('normalize-volume') === '1',
+      splitChapters: false,
       download: null,
       pollTimer: null,
       debounceTimer: null,
@@ -419,8 +453,12 @@ export default {
     trimEnd() {
       return parseTime(this.trim.end);
     },
+    chapters() {
+      return this.video?.chapters || [];
+    },
     trimError() {
       if (Number.isNaN(this.trimStart) || Number.isNaN(this.trimEnd)) return 'Use times like 1:30 or 90.';
+      if (this.splitChapters && (this.trimStart || this.trimEnd)) return 'Splitting into tracks uses the whole video. Clear the start and end times.';
       const duration = this.video?.duration;
       if (this.trimEnd !== null && this.trimEnd <= (this.trimStart || 0)) return 'The end must be after the start.';
       if (duration && (this.trimStart || 0) >= duration) return `The video is only ${formatDuration(duration)} long.`;
@@ -434,6 +472,7 @@ export default {
       const parts = [];
       if (this.trimStart || this.trimEnd) parts.push(`${formatDuration(this.trimStart || 0)}–${this.trimEnd ? formatDuration(this.trimEnd) : 'end'}`);
       if (this.removeSilence) parts.push('no silence');
+      if (this.normalizeVolume) parts.push('even volume');
       return parts.join(' · ');
     },
     tagsSummary() {
@@ -441,6 +480,9 @@ export default {
     },
   },
   watch: {
+    normalizeVolume(on) {
+      writeStorage('normalize-volume', on ? '1' : '0');
+    },
     mode(mode) {
       if (mode === 'bulk') this.$nextTick(() => this.$refs.bulk?.focus());
     },
@@ -562,6 +604,7 @@ export default {
         };
         this.trim = { start: '', end: '' };
         this.removeSilence = false;
+        this.splitChapters = false;
       } catch (error) {
         if (lookupId !== this.lookupId) return;
         this.inputError = errorMessage(error, 'Could not load this video.');
@@ -586,6 +629,8 @@ export default {
           trim_start: this.trimStart || null,
           trim_end: this.trimEnd && this.trimEnd < (this.video.duration || Infinity) ? this.trimEnd : null,
           remove_silence: this.removeSilence,
+          normalize_volume: this.normalizeVolume,
+          split_chapters: this.splitChapters && this.chapters.length > 1,
         });
         this.download = data.download;
         if (data.download.status === 'completed') {
@@ -602,7 +647,7 @@ export default {
 
     startPolling() {
       this.stopPolling();
-      this.pollTimer = setInterval(this.refresh, 1500);
+      this.pollTimer = setInterval(this.refresh, 1000);
     },
 
     stopPolling() {

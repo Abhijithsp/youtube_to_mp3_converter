@@ -183,6 +183,7 @@ class YouTubeService
                 'genre' => $info['genre'] ?? null,
                 'thumbnail' => $info['thumbnail'] ?? null,
                 'duration' => isset($info['duration']) ? (int) round($info['duration']) : null,
+                'chapters' => $this->chaptersFrom($info),
                 'url' => $url,
             ];
         } catch (Exception $e) {
@@ -192,6 +193,31 @@ class YouTubeService
             ]);
             throw $e;
         }
+    }
+
+    /**
+     * Chapters of a video (mixes, albums, sets): [['title', 'start', 'end'], ...] in seconds.
+     * Fewer than two chapters is no split, so an empty list is returned.
+     */
+    private function chaptersFrom(array $info): array
+    {
+        $chapters = [];
+        foreach ($info['chapters'] ?? [] as $i => $chapter) {
+            $start = (float) ($chapter['start_time'] ?? 0);
+            $end = (float) ($chapter['end_time'] ?? 0);
+            if ($end - $start < 1) {
+                continue;
+            }
+
+            $title = trim((string) ($chapter['title'] ?? ''));
+            $chapters[] = [
+                'title' => $title !== '' ? $title : 'Part ' . ($i + 1),
+                'start' => round($start, 2),
+                'end' => round($end, 2),
+            ];
+        }
+
+        return count($chapters) >= 2 ? $chapters : [];
     }
 
     private function yearFrom(array $info): ?int

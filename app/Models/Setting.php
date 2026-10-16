@@ -32,6 +32,14 @@ class Setting extends Model
     }
 
     /**
+     * Look up lyrics for new downloads (Settings page, default on)
+     */
+    public static function fetchLyrics(): bool
+    {
+        return filter_var(static::get('fetch_lyrics', config('youtube-converter.fetch_lyrics', true)), FILTER_VALIDATE_BOOL);
+    }
+
+    /**
      * Relative paths (e.g. YOUTUBE_DOWNLOAD_PATH=storage/app/downloads) would resolve
      * against the working directory, which is public/ for web requests but the
      * project root for the queue worker, so anchor them to the project root.

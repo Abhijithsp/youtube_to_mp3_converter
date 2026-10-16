@@ -22,9 +22,15 @@ class AudioConverterService
     private const TRAILING_SILENCE_MAX_SECONDS = 1200;
 
     /**
+     * Loudness normalisation (EBU R128). The output sample rate is always set
+     * explicitly below, because loudnorm would otherwise resample to 192 kHz.
+     */
+    public const LOUDNESS_FILTER = 'loudnorm=I=-14:TP=-1.5:LRA=11';
+
+    /**
      * Build the ffmpeg command for a conversion.
      *
-     * Options: trim_start / trim_end (seconds), remove_silence (bool),
+     * Options: trim_start / trim_end (seconds), remove_silence (bool), normalize_volume (bool),
      * duration (seconds, used to decide on trailing-silence removal).
      */
     public function buildCommand(string $inputPath, string $outputPath, string $format = 'mp3', int $quality = 320, array $options = []): array
@@ -47,13 +53,24 @@ class AudioConverterService
         // paths/titles with spaces stay intact and no PATH lookup through cmd.exe is needed.
         $command = [...$command, '-i', $inputPath, '-vn', '-ac', '2'];
 
+        $filters = [];
+
         if (!empty($options['remove_silence'])) {
             $silence = 'silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.2';
             $duration = (int) ($options['duration'] ?? 0);
-            $filter = $duration > 0 && $duration <= self::TRAILING_SILENCE_MAX_SECONDS
+            $filters[] = $duration > 0 && $duration <= self::TRAILING_SILENCE_MAX_SECONDS
                 ? "{$silence},areverse,{$silence},areverse"
                 : $silence;
-            $command = [...$command, '-af', $filter];
+        }
+
+        if (!empty($options['normalize_volume'])) {
+            // Same perceived loudness for every song (-14 LUFS, like streaming services),
+            // with peaks kept below -1.5 dB so nothing clips
+            $filters[] = self::LOUDNESS_FILTER;
+        }
+
+        if ($filters) {
+            $command = [...$command, '-af', implode(',', $filters)];
         }
 
         $command = [...$command, ...match ($format) {
@@ -66,6 +83,36 @@ class AudioConverterService
         $command[] = $outputPath;
 
         return $command;
+    }
+
+    /**
+     * ffmpeg command for a ringtone: a short MP3 clip of a song, with a quick fade
+     * in and a longer fade out so it does not start or stop abruptly.
+     */
+    public function ringtoneCommand(string $inputPath, string $outputPath, float $start, float $length, bool $fade = true, array $tags = []): array
+    {
+        $command = [
+            'ffmpeg', '-y',
+            '-ss', (string) round($start, 2),
+            '-t', (string) round($length, 2),
+            '-i', $inputPath,
+            '-vn', '-ac', '2', '-ar', '44100',
+        ];
+
+        if ($fade) {
+            $fadeOut = min(2, $length / 4);
+            $command = [...$command, '-af', sprintf('afade=t=in:d=0.5,afade=t=out:st=%s:d=%s', round($length - $fadeOut, 2), round($fadeOut, 2))];
+        }
+
+        $command = [...$command, '-c:a', 'libmp3lame', '-b:a', '192k'];
+
+        foreach ($tags as $tag => $value) {
+            if ($value !== null && $value !== '') {
+                $command = [...$command, '-metadata', "{$tag}={$value}"];
+            }
+        }
+
+        return [...$command, '-id3v2_version', '3', $outputPath];
     }
 
     /**

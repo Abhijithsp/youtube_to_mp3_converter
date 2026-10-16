@@ -56,6 +56,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Lyrics
+    |--------------------------------------------------------------------------
+    |
+    | Look up lyrics on LRCLIB (lrclib.net, free, no account) for new downloads,
+    | save them into the file and show them in the player. Can be changed on the
+    | Settings page.
+    |
+    */
+    'fetch_lyrics' => env('FETCH_LYRICS', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | Max Playlist Size
     |--------------------------------------------------------------------------
     |

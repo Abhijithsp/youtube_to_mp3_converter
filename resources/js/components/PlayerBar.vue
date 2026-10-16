@@ -9,6 +9,13 @@
       v-if="player.track"
       class="pointer-events-none fixed inset-x-0 z-40 px-2 bottom-[calc(4.25rem+env(safe-area-inset-bottom))] sm:px-4 md:bottom-4 md:left-20 lg:left-60"
     >
+      <LyricsPanel
+        v-if="showLyrics && track.id"
+        :track="track"
+        :current-time="player.currentTime"
+        @seek="seek"
+        @close="showLyrics = false"
+      />
       <section
         class="card pointer-events-auto mx-auto max-w-5xl !rounded-2xl px-3 py-2.5 sm:px-4"
         style="box-shadow: var(--md-elev-2)"
@@ -72,6 +79,17 @@
                 @click="cycleRepeat"
               >
                 <AppIcon :path="player.repeat === 'one' ? mdiRepeatOnce : player.repeat === 'all' ? mdiRepeat : mdiRepeatOff" />
+              </button>
+              <button
+                type="button"
+                class="icon-btn"
+                :class="showLyrics && '!text-primary'"
+                :aria-pressed="showLyrics"
+                title="Lyrics"
+                aria-label="Lyrics"
+                @click="showLyrics = !showLyrics"
+              >
+                <AppIcon :path="mdiMicrophoneVariant" />
               </button>
             </div>
             <div class="flex w-full items-center gap-2">
@@ -139,6 +157,9 @@
             <button type="button" class="icon-btn" aria-label="Next" :disabled="!hasNext()" @click="next()">
               <AppIcon :path="mdiSkipNext" />
             </button>
+            <button type="button" class="icon-btn" :class="showLyrics && '!text-primary'" :aria-pressed="showLyrics" aria-label="Lyrics" @click="showLyrics = !showLyrics">
+              <AppIcon :path="mdiMicrophoneVariant" />
+            </button>
           </div>
 
           <button type="button" class="icon-btn" title="Close player" aria-label="Close player" @click="stop">
@@ -182,6 +203,7 @@
 import {
   mdiClose,
   mdiLoading,
+  mdiMicrophoneVariant,
   mdiMusicNote,
   mdiPause,
   mdiPlay,
@@ -199,6 +221,7 @@ import {
   mdiVolumeOff,
 } from '@mdi/js';
 import AppIcon from './AppIcon.vue';
+import LyricsPanel from './LyricsPanel.vue';
 import WaveformSeek from './WaveformSeek.vue';
 import { downloadAPI } from '../services/api';
 import {
@@ -218,14 +241,16 @@ import {
 
 export default {
   name: 'PlayerBar',
-  components: { AppIcon, WaveformSeek },
+  components: { AppIcon, LyricsPanel, WaveformSeek },
   data() {
     return {
       player,
       // Waveforms fetched for tracks that came without one: id → peaks, or false if unavailable
       fetchedWaveforms: {},
+      showLyrics: false,
       mdiClose,
       mdiLoading,
+      mdiMicrophoneVariant,
       mdiMusicNote,
       mdiPause,
       mdiPlay,

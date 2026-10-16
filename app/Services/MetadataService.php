@@ -14,9 +14,9 @@ class MetadataService
      * Tag audio file with metadata.
      *
      * With $clearEmpty, empty values remove the existing tag (used when editing tags);
-     * otherwise they are left out.
+     * otherwise they are left out. $extraTags adds more metadata keys => tag names.
      */
-    public function tagFile(string $filePath, array $metadata, bool $clearEmpty = false): bool
+    public function tagFile(string $filePath, array $metadata, bool $clearEmpty = false, array $extraTags = []): bool
     {
         try {
             if (!file_exists($filePath)) {
@@ -29,7 +29,7 @@ class MetadataService
                 'album' => 'album',
                 'year' => 'date',
                 'genre' => 'genre',
-            ];
+            ] + $extraTags;
 
             $metadataArgs = [];
 
@@ -199,6 +199,106 @@ class MetadataService
             ]);
             return false;
         }
+    }
+
+    /**
+     * Save lyrics into the file, where music players show them: an ID3 USLT frame
+     * for MP3 (ffmpeg would write a custom TXXX frame that players ignore) and a
+     * LYRICS Vorbis comment for FLAC. WAV has no lyrics tag. Returns false on failure.
+     */
+    public function writeLyrics(string $filePath, string $lyrics): bool
+    {
+        $lyrics = trim($lyrics);
+        if ($lyrics === '' || !is_file($filePath)) {
+            return false;
+        }
+
+        try {
+            return match (strtolower(pathinfo($filePath, PATHINFO_EXTENSION))) {
+                'mp3' => $this->writeId3Lyrics($filePath, $lyrics),
+                'flac' => $this->tagFile($filePath, ['lyrics' => $lyrics], extraTags: ['lyrics' => 'LYRICS']),
+                default => false,
+            };
+        } catch (Exception $e) {
+            Log::warning('Writing lyrics failed', ['file' => $filePath, 'error' => $e->getMessage()]);
+
+            return false;
+        }
+    }
+
+    /**
+     * Add (or replace) the USLT frame in an MP3's ID3v2.3 tag, as written by ffmpeg
+     */
+    private function writeId3Lyrics(string $filePath, string $lyrics): bool
+    {
+        $data = file_get_contents($filePath);
+        if ($data === false || strlen($data) < 10 || !str_starts_with($data, 'ID3') || ord($data[3]) !== 3) {
+            return false;
+        }
+
+        // Unsynchronised or extended-header tags are not written by ffmpeg; leave them alone
+        if (ord($data[5]) & 0xC0) {
+            return false;
+        }
+
+        $tagSize = $this->syncsafeDecode(substr($data, 6, 4));
+        $body = substr($data, 10, $tagSize);
+        $audio = substr($data, 10 + $tagSize);
+
+        // Keep every frame except an old USLT; stop at the padding
+        $frames = '';
+        for ($pos = 0; $pos + 10 <= strlen($body);) {
+            $id = substr($body, $pos, 4);
+            if (!preg_match('/^[A-Z0-9]{4}$/', $id)) {
+                break;
+            }
+            $size = unpack('N', substr($body, $pos + 4, 4))[1];
+            if ($size < 0 || $pos + 10 + $size > strlen($body)) {
+                return false;
+            }
+            if ($id !== 'USLT') {
+                $frames .= substr($body, $pos, 10 + $size);
+            }
+            $pos += 10 + $size;
+        }
+
+        // UTF-16 with BOM (encoding 1) so every script survives; empty description
+        $utf16 = fn (string $text) => "\xFF\xFE" . mb_convert_encoding($text, 'UTF-16LE', 'UTF-8');
+        $content = "\x01" . 'eng' . $utf16('') . "\x00\x00" . $utf16(str_replace("\r\n", "\n", $lyrics));
+        $frames .= 'USLT' . pack('N', strlen($content)) . "\x00\x00" . $content;
+
+        $header = 'ID3' . "\x03\x00" . "\x00" . $this->syncsafeEncode(strlen($frames));
+        $tempPath = $this->tempPathFor($filePath);
+
+        if (file_put_contents($tempPath, $header . $frames . $audio) === false) {
+            @unlink($tempPath);
+
+            return false;
+        }
+
+        // A file that is playing can be locked (Windows): keep the original then
+        if (!@unlink($filePath)) {
+            @unlink($tempPath);
+
+            return false;
+        }
+
+        return rename($tempPath, $filePath);
+    }
+
+    private function syncsafeDecode(string $bytes): int
+    {
+        $size = 0;
+        foreach (str_split($bytes) as $byte) {
+            $size = ($size << 7) | (ord($byte) & 0x7F);
+        }
+
+        return $size;
+    }
+
+    private function syncsafeEncode(int $size): string
+    {
+        return chr(($size >> 21) & 0x7F) . chr(($size >> 14) & 0x7F) . chr(($size >> 7) & 0x7F) . chr($size & 0x7F);
     }
 
     /**

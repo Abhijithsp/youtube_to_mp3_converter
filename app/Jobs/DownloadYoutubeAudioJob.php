@@ -14,6 +14,8 @@ use App\Services\AudioConverterService;
 use App\Services\MetadataService;
 use App\Services\DiskSpaceService;
 use App\Services\WaveformService;
+use App\Services\LyricsService;
+use App\Services\ChapterSplitService;
 use App\Exceptions\DownloadCancelledException;
 use App\Exceptions\InsufficientDiskSpaceException;
 use App\Exceptions\YouTubeDownloadException;
@@ -58,7 +60,9 @@ class DownloadYoutubeAudioJob implements ShouldQueue
         AudioConverterService $audioConverter,
         MetadataService $metadataService,
         DiskSpaceService $diskSpaceService,
-        WaveformService $waveformService
+        WaveformService $waveformService,
+        LyricsService $lyricsService,
+        ChapterSplitService $chapterSplitService
     ): void
     {
         $tempFile = null;
@@ -79,8 +83,11 @@ class DownloadYoutubeAudioJob implements ShouldQueue
 
             // Step 1: Extract video info. The create endpoint already stores the video ID
             // (and the UI sends a title), but duration/thumbnail/artist come only from yt-dlp.
-            if ($this->needsVideoInfo()) {
+            // Splitting needs the chapter list, which only yt-dlp knows
+            $chapters = [];
+            if ($this->needsVideoInfo() || $this->wantsChapters()) {
                 $videoInfo = $youtubeService->extractVideoInfo($this->download->youtube_url);
+                $chapters = $this->wantsChapters() ? ($videoInfo['chapters'] ?? []) : [];
                 // Titles the user (or the UI's suggestion) set are kept as they are
                 $suggested = TrackTitle::suggest($videoInfo, Setting::cleanTitles());
 
@@ -96,7 +103,7 @@ class DownloadYoutubeAudioJob implements ShouldQueue
                 ], fn ($value) => $value !== null && $value !== ''));
             }
 
-            $this->download->updateProgress(10);
+            $this->download->updateProgress(3);
 
             // Step 2: Check disk space (configured reserve + estimated size of this file)
             $estimatedMb = $this->download->duration
@@ -145,12 +152,12 @@ class DownloadYoutubeAudioJob implements ShouldQueue
                 $counter++;
             }
 
-            $this->download->update(['progress' => 20, 'status_text' => 'Starting download...']);
+            $this->download->update(['progress' => 5, 'status_text' => 'Starting download...']);
 
             // Step 4: Download audio using yt-dlp
             Log::info('Downloading audio', ['url' => $this->download->youtube_url]);
 
-            $lastReportedProgress = 20;
+            $lastReportedProgress = -1;
             try {
                 $youtubeService->downloadAudio(
                     $this->download->youtube_url,
@@ -158,24 +165,21 @@ class DownloadYoutubeAudioJob implements ShouldQueue
                     $this->download->format,
                     (int) $this->download->quality,
                     function ($progress, $size = null) use (&$lastReportedProgress) {
-                        // yt-dlp progress is 0 to 100
-                        // Map it to the 20-50 overall progress range
-                        $overallProgress = 20 + ($progress * 0.3);
-                        $intProgress = (int) $overallProgress;
-
+                        // yt-dlp progress is 0 to 100; downloading is most of the wait,
+                        // so it fills the 5-65 range of the bar
+                        $percent = (int) $progress;
                         $sizeText = $size ? " ($size)" : "";
-                        $statusText = "Downloading video stream... {$progress}%{$sizeText}";
 
-                        // Only update the database when the integer percentage changes to avoid spamming
-                        if ($intProgress > $lastReportedProgress) {
+                        // One database update per whole percent of the download
+                        if ($percent > $lastReportedProgress) {
                             // Throwing here stops the running yt-dlp process
                             $this->abortIfCancelled();
 
                             $this->download->update([
-                                'progress' => $intProgress,
-                                'status_text' => $statusText
+                                'progress' => (int) (5 + $progress * 0.6),
+                                'status_text' => "Downloading... {$percent}%{$sizeText}",
                             ]);
-                            $lastReportedProgress = $intProgress;
+                            $lastReportedProgress = $percent;
                         }
                     }
                 );
@@ -190,7 +194,7 @@ class DownloadYoutubeAudioJob implements ShouldQueue
             $this->abortIfCancelled();
 
             $this->download->update([
-                'progress' => 50,
+                'progress' => 65,
                 'status_text' => 'Download complete. Preparing for conversion...',
             ]);
 
@@ -210,12 +214,10 @@ class DownloadYoutubeAudioJob implements ShouldQueue
             $originalFileSize = filesize($downloadedFile);
             $this->download->update(['original_file_size' => $originalFileSize]);
 
-            $this->download->updateProgress(60);
-
             // Step 6: Convert if necessary (yt-dlp downloads the raw audio stream, e.g. webm/m4a).
-            // Trimming or silence removal always needs a re-encode.
+            // Trimming, silence removal or volume levelling always needs a re-encode.
             $editOptions = $this->editOptions();
-            $isEdited = $editOptions['trim_start'] || $editOptions['trim_end'] || $editOptions['remove_silence'];
+            $isEdited = $editOptions['trim_start'] || $editOptions['trim_end'] || $editOptions['remove_silence'] || $editOptions['normalize_volume'];
             $needsConversion = $isEdited || pathinfo($downloadedFile, PATHINFO_EXTENSION) !== $this->download->format;
 
             if ($needsConversion) {
@@ -244,8 +246,8 @@ class DownloadYoutubeAudioJob implements ShouldQueue
                                 if ($intPercent > $lastConversionProgress) {
                                     $this->abortIfCancelled();
 
-                                    // Map 0-100 conversion to 60-80 overall progress
-                                    $overallProgress = 60 + ($percent * 0.2);
+                                    // Map 0-100 conversion to 65-90 overall progress
+                                    $overallProgress = 65 + ($percent * 0.25);
 
                                     $sizeMb = number_format($sizeKb / 1024, 2);
                                     $this->download->update([
@@ -289,7 +291,7 @@ class DownloadYoutubeAudioJob implements ShouldQueue
             $this->abortIfCancelled();
 
             $this->download->update([
-                'progress' => 80,
+                'progress' => 90,
                 'conversion_progress' => 100,
                 'status_text' => 'Applying metadata tags...',
             ]);
@@ -311,6 +313,7 @@ class DownloadYoutubeAudioJob implements ShouldQueue
 
                 // Download and attach thumbnail if available (WAV cannot hold cover art)
                 if ($this->download->thumbnail_url && $this->download->format !== 'wav') {
+                    $this->download->update(['progress' => 92, 'status_text' => 'Adding cover art...']);
                     $thumbnailPath = $tempFile . '_thumb';
 
                     if ($metadataService->downloadThumbnail($this->download->thumbnail_url, $thumbnailPath)) {
@@ -324,18 +327,37 @@ class DownloadYoutubeAudioJob implements ShouldQueue
                 Log::warning('Metadata tagging failed', ['error' => $e->getMessage()]);
             }
 
-            $this->download->update(['progress' => 90, 'status_text' => 'Drawing waveform...']);
+            // Step 7b: Lyrics (optional; written last so the cover-art rewrite keeps them)
+            if (!$chapters && Setting::fetchLyrics()) {
+                $this->download->update(['progress' => 94, 'status_text' => 'Looking for lyrics...']);
+                $this->download->update($lyricsService->lookup($this->download));
 
-            // Step 8: Waveform for the player's seek bar (optional: null on failure)
-            $waveform = $waveformService->generate($finalFile);
+                if ($this->download->lyrics) {
+                    $metadataService->writeLyrics($finalFile, $this->download->lyrics);
+                }
+            }
+
+            if ($chapters) {
+                // Step 8: One file per chapter; this download becomes track 1
+                $this->download->update(['progress' => 96, 'status_text' => 'Splitting into' . count($chapters) . ' tracks...']);
+                $chapterSplitService->split($this->download, $finalFile, $chapters, $downloadPath);
+                $finalFile = $this->download->file_path;
+                $fileFields = [];
+            } else {
+                $this->download->update(['progress' => 97, 'status_text' => 'Drawing waveform...']);
+
+                // Step 8: Waveform for the player's seek bar (optional: null on failure)
+                $fileFields = [
+                    'file_path' => $finalFile,
+                    'file_size' => filesize($finalFile),
+                    'waveform' => $waveformService->generate($finalFile),
+                ];
+            }
 
             // Step 9: Mark as completed
-            $this->download->update([
+            $this->download->update($fileFields + [
                 'status' => 'completed',
-                'status_text' => 'Completed',
-                'file_path' => $finalFile,
-                'file_size' => filesize($finalFile),
-                'waveform' => $waveform,
+                'status_text' => $chapters ? 'Completed: split into ' . count($chapters) . ' tracks' : 'Completed',
                 'progress' => 100,
                 'error_message' => null,
                 'completed_at' => now(),
@@ -428,7 +450,16 @@ class DownloadYoutubeAudioJob implements ShouldQueue
             'trim_start' => $start,
             'trim_end' => $end > $start ? $end : 0,
             'remove_silence' => (bool) $this->download->remove_silence,
+            'normalize_volume' => (bool) $this->download->normalize_volume,
         ];
+    }
+
+    /**
+     * Chapters are only split for whole videos (a trimmed part has no matching chapters)
+     */
+    private function wantsChapters(): bool
+    {
+        return $this->download->split_chapters && !$this->download->trim_start && !$this->download->trim_end;
     }
 
     private function needsVideoInfo(): bool

@@ -101,14 +101,27 @@
             >
               <AppIcon :path="isPlaying(d) ? mdiPauseCircle : mdiPlayCircleOutline" />
             </button>
-            <button type="button" class="icon-btn" title="Edit tags" aria-label="Edit tags" @click="editing = d">
-              <AppIcon :path="mdiPencilOutline" />
-            </button>
-            <a :href="d.download_url" class="icon-btn" title="Save file" aria-label="Save file">
-              <AppIcon :path="mdiTrayArrowDown" />
-            </a>
-            <button type="button" class="icon-btn" title="Delete" aria-label="Delete" @click="remove(d)">
-              <AppIcon :path="mdiDeleteOutline" />
+            <!-- Tablet/desktop: every action as a button -->
+            <div class="hidden items-center gap-0.5 sm:flex">
+              <button type="button" class="icon-btn" title="Edit tags" aria-label="Edit tags" @click="editing = d">
+                <AppIcon :path="mdiPencilOutline" />
+              </button>
+              <button type="button" class="icon-btn" title="Make ringtone" aria-label="Make ringtone" @click="ringtoneFor = d">
+                <AppIcon :path="mdiBellRingOutline" />
+              </button>
+              <button v-if="canOpenFolder" type="button" class="icon-btn" title="Show in folder" aria-label="Show in folder" @click="reveal(d)">
+                <AppIcon :path="mdiFolderOpenOutline" />
+              </button>
+              <a :href="d.download_url" class="icon-btn" title="Save file" aria-label="Save file">
+                <AppIcon :path="mdiTrayArrowDown" />
+              </a>
+              <button type="button" class="icon-btn" title="Delete" aria-label="Delete" @click="remove(d)">
+                <AppIcon :path="mdiDeleteOutline" />
+              </button>
+            </div>
+            <!-- Phone: the rest behind one button, so titles keep their room -->
+            <button type="button" class="icon-btn sm:hidden" aria-label="More actions" aria-haspopup="dialog" @click="actionsFor = d">
+              <AppIcon :path="mdiDotsVertical" />
             </button>
           </template>
         </DownloadRow>
@@ -126,18 +139,41 @@
     </section>
 
     <TagEditorDialog :download="editing" @close="editing = null" @saved="onSaved" />
+    <RingtoneDialog :download="ringtoneFor" @close="ringtoneFor = null" />
+
+    <!-- Phone actions sheet -->
+    <Transition
+      enter-from-class="opacity-0"
+      leave-to-class="opacity-0"
+      enter-active-class="transition duration-150"
+      leave-active-class="transition duration-100"
+    >
+      <div v-if="actionsFor" class="fixed inset-0 z-50 grid place-items-end bg-black/50" @click.self="actionsFor = null" @keydown.esc="actionsFor = null">
+        <section class="card w-full !rounded-b-none px-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 animate-fade-up" role="dialog" aria-modal="true" :aria-label="`Actions for ${actionsFor.title}`">
+          <div class="mx-auto mb-2 h-1 w-10 rounded-full bg-line-strong" aria-hidden="true" />
+          <p class="truncate px-3 pb-2 text-sm font-semibold text-fg">{{ actionsFor.title }}</p>
+          <button v-for="action in sheetActions" :key="action.label" type="button" class="flex w-full items-center gap-4 rounded-xl px-3 py-3 text-left text-sm text-fg hover:bg-surface-2" :class="action.danger && '!text-danger'" @click="runSheetAction(action)">
+            <AppIcon :path="action.icon" :size="22" :class="action.danger ? 'text-danger' : 'text-fg-muted'" />
+            {{ action.label }}
+          </button>
+        </section>
+      </div>
+    </Transition>
   </div>
 </template>
 
 <script>
 import {
+  mdiBellRingOutline,
   mdiCheckboxMultipleBlankOutline,
   mdiCheckboxMultipleMarkedOutline,
   mdiChevronLeft,
   mdiChevronRight,
   mdiClose,
+  mdiFolderOpenOutline,
   mdiFolderZipOutline,
   mdiDeleteOutline,
+  mdiDotsVertical,
   mdiPencilOutline,
   mdiDeleteSweepOutline,
   mdiHistory,
@@ -153,6 +189,7 @@ import AppIcon from '../components/AppIcon.vue';
 import DownloadRow from '../components/DownloadRow.vue';
 import EmptyState from '../components/EmptyState.vue';
 import PageHeader from '../components/PageHeader.vue';
+import RingtoneDialog from '../components/RingtoneDialog.vue';
 import TagEditorDialog from '../components/TagEditorDialog.vue';
 import { downloadAPI, historyAPI } from '../services/api';
 import { forget, isCurrent, player, playAll, stop, toggle } from '../player';
@@ -160,7 +197,7 @@ import { confirmDialog, errorMessage, notify } from '../ui';
 
 export default {
   name: 'DownloadHistory',
-  components: { AppIcon, DownloadRow, EmptyState, PageHeader, TagEditorDialog },
+  components: { AppIcon, DownloadRow, EmptyState, PageHeader, RingtoneDialog, TagEditorDialog },
   data() {
     return {
       downloads: [],
@@ -175,16 +212,24 @@ export default {
       player,
       startingAll: false,
       editing: null,
+      ringtoneFor: null,
+      // The server says whether this browser is on the same computer (folder button)
+      canOpenFolder: false,
+      // Song whose actions sheet is open (phone)
+      actionsFor: null,
       // Selection for the ZIP download: id → true, kept across pages and searches
       selecting: false,
       selected: {},
+      mdiBellRingOutline,
       mdiCheckboxMultipleBlankOutline,
       mdiCheckboxMultipleMarkedOutline,
       mdiChevronLeft,
       mdiChevronRight,
       mdiClose,
+      mdiFolderOpenOutline,
       mdiFolderZipOutline,
       mdiDeleteOutline,
+      mdiDotsVertical,
       mdiPencilOutline,
       mdiDeleteSweepOutline,
       mdiHistory,
@@ -200,6 +245,15 @@ export default {
   computed: {
     selectedCount() {
       return Object.keys(this.selected).length;
+    },
+    sheetActions() {
+      return [
+        { label: 'Edit tags', icon: mdiPencilOutline, run: (d) => (this.editing = d) },
+        { label: 'Make ringtone', icon: mdiBellRingOutline, run: (d) => (this.ringtoneFor = d) },
+        { label: 'Save file', icon: mdiTrayArrowDown, run: (d) => window.location.assign(d.download_url) },
+        ...(this.canOpenFolder ? [{ label: 'Show in folder', icon: mdiFolderOpenOutline, run: (d) => this.reveal(d) }] : []),
+        { label: 'Delete', icon: mdiDeleteOutline, danger: true, run: (d) => this.remove(d) },
+      ];
     },
     pageSelected() {
       return this.downloads.length > 0 && this.downloads.every((d) => this.selected[d.id]);
@@ -228,6 +282,7 @@ export default {
         this.page = data.current_page;
         this.lastPage = data.last_page;
         this.total = data.total;
+        this.canOpenFolder = !!data.can_open_folder;
       } catch (error) {
         notify(errorMessage(error, 'Could not load history'), 'error');
       } finally {
@@ -241,6 +296,20 @@ export default {
     },
 
     toggle,
+
+    async reveal(download) {
+      try {
+        await downloadAPI.reveal(download.id);
+      } catch (error) {
+        notify(errorMessage(error, 'Could not open the folder'), 'error');
+      }
+    },
+
+    runSheetAction(action) {
+      const download = this.actionsFor;
+      this.actionsFor = null;
+      action.run(download);
+    },
 
     startSelecting() {
       this.selecting = true;

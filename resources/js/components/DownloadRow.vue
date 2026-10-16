@@ -41,17 +41,13 @@
       <p class="line-clamp-2 break-words text-sm font-medium leading-snug text-fg sm:line-clamp-1" :title="download.title">{{ download.title }}</p>
 
       <div class="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-fg-muted">
-        <StatusChip v-if="showStatus" :status="download.status" class="shrink-0" />
+        <StatusChip v-if="showStatus" :status="download.status" :text="download.status_text || ''" class="shrink-0" />
         <span class="chip shrink-0">{{ download.format }}<template v-if="download.format === 'mp3'"> · {{ download.quality }}k</template></span>
         <span class="truncate">{{ meta }}</span>
       </div>
 
       <template v-if="active">
-        <LinearProgress
-          class="mt-2"
-          :value="download.progress"
-          :indeterminate="download.status === 'pending' && !download.progress"
-        />
+        <LinearProgress class="mt-2" :value="download.progress" />
       </template>
       <p
         v-else-if="download.status === 'failed' && download.error_message"
@@ -96,7 +92,7 @@ export default {
     meta() {
       const d = this.download;
       if (this.active) {
-        const text = d.status_text || (d.status === 'pending' ? 'Waiting in queue…' : 'Working…');
+        const text = d.status_text || (d.status === 'pending' ? 'Waiting in queue…' : 'Starting…');
         return d.progress ? `${d.progress}% · ${text}` : text;
       }
       const parts = [];

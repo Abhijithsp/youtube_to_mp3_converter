@@ -64,6 +64,22 @@ export const downloadAPI = {
         return api.get(`/downloads/${id}/waveform`);
     },
 
+    // Lyrics for the player (looked up online the first time)
+    lyrics(id, refresh = false) {
+        return api.get(`/downloads/${id}/lyrics`, { params: refresh ? { refresh: 1 } : {} });
+    },
+
+    // MP3 ringtone from part of a song: { start, length, fade }
+    getRingtoneUrl(id, { start, length, fade }) {
+        const params = new URLSearchParams({ start: String(start), length: String(length), fade: fade ? "1" : "0" });
+        return `/api/downloads/${id}/ringtone?${params}`;
+    },
+
+    // Open the file's folder on the computer running the app
+    reveal(id) {
+        return api.post(`/downloads/${id}/reveal`);
+    },
+
     // Edit tags of a finished download (re-tags and renames the file)
     update(id, data) {
         return api.patch(`/downloads/${id}`, data);

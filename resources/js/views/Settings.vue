@@ -94,7 +94,7 @@
 
       <!-- Titles -->
       <section class="card p-4">
-        <SectionTitle :icon="mdiFormatTitle" title="Titles" />
+        <SectionTitle :icon="mdiFormatTitle" title="Titles & lyrics" />
         <label class="mt-3 flex cursor-pointer items-start gap-3">
           <input v-model="form.clean_titles" type="checkbox" class="checkbox mt-0.5" />
           <span>
@@ -103,6 +103,16 @@
               Removes “(Official Music Video)”, “[HD]”, “| Lyrics” and similar from titles and file names, and
               takes the artist from “Artist - Song” titles. “D-Sturb - LADY (Official Music Video)” becomes
               “D-Sturb - LADY”, tagged as “LADY” by “D-Sturb”.
+            </span>
+          </span>
+        </label>
+        <label class="mt-3 flex cursor-pointer items-start gap-3">
+          <input v-model="form.fetch_lyrics" type="checkbox" class="checkbox mt-0.5" />
+          <span>
+            <span class="block text-sm font-medium text-fg">Find lyrics</span>
+            <span class="block text-xs text-fg-muted">
+              Looks up lyrics on LRCLIB (free) after each download, saves them into the file so music apps show
+              them, and shows them in the player, line by line when timed lyrics exist.
             </span>
           </span>
         </label>
@@ -340,6 +350,7 @@ export default {
         ytdlp_cookies_browser: '',
         ytdlp_cookies_file: '',
         clean_titles: true,
+        fetch_lyrics: true,
       },
       saved: '',
       browsers: [],

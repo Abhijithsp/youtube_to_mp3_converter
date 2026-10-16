@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Download;
+use App\Support\FileExplorer;
 use Illuminate\Http\Request;
 
 class HistoryController extends Controller
@@ -41,7 +42,10 @@ class HistoryController extends Controller
 
         $downloads = $query->paginate(min(max((int) $request->input('per_page', 20), 1), 100));
 
-        return response()->json($downloads);
+        // The folder button only shows when the browser runs on this computer
+        return response()->json($downloads->toArray() + [
+            'can_open_folder' => FileExplorer::available($request),
+        ]);
     }
 
     /**

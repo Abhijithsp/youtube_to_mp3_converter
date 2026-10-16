@@ -99,6 +99,7 @@ class YouTubeServiceTest extends TestCase
             'genre' => null,
             'thumbnail' => 'https://i.ytimg.com/vi/TpHlTBRLHgs/maxresdefault.jpg',
             'duration' => 177,
+            'chapters' => [],
             'url' => 'https://www.youtube.com/watch?v=TpHlTBRLHgs',
         ], $info);
 
