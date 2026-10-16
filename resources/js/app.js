@@ -20,6 +20,17 @@ if ('serviceWorker' in navigator) {
     });
 }
 
+// Clicking a download notification opens its page without reloading (music keeps playing)
+function openPage(path) {
+    if (typeof path === 'string' && path.startsWith('/') && router.currentRoute.value.path !== path) {
+        router.push(path);
+    }
+}
+navigator.serviceWorker?.addEventListener('message', (event) => {
+    if (event.data?.type === 'open') openPage(event.data.url);
+});
+window.addEventListener('audiofetch:open', (event) => openPage(event.detail));
+
 // Chrome/Edge/Android offer installing through this event; the app shows its own button
 window.addEventListener('beforeinstallprompt', (event) => {
     event.preventDefault();

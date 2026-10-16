@@ -221,6 +221,16 @@ class SettingsController extends Controller
                 'detail' => "{$free} MB free (keeping {$minFree} MB)",
                 'fix' => 'Free up space or lower "Keep free" under Settings → Storage',
             ],
+            [
+                'key' => 'zip',
+                'label' => 'PHP zip extension',
+                'required' => false,
+                'ok' => class_exists(\ZipArchive::class),
+                'detail' => class_exists(\ZipArchive::class)
+                    ? 'Installed: songs can be saved together as a ZIP'
+                    : 'Missing: "Download ZIP" in History will not work',
+                'fix' => $windows ? 'Enable extension=zip in php.ini' : 'sudo apt install php-zip',
+            ],
         ];
 
         return response()->json([

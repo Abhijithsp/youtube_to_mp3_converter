@@ -29,6 +29,7 @@ Route::middleware(RequireAppPassword::class)->group(function () {
         Route::get('/', [DownloadController::class, 'index']);
         Route::post('/', [DownloadController::class, 'store']);
         Route::post('/bulk', [DownloadController::class, 'bulk']);
+        Route::get('/zip', [DownloadController::class, 'zip']);
         Route::get('/{download}', [DownloadController::class, 'show']);
         Route::patch('/{download}', [DownloadController::class, 'update']);
         Route::delete('/{download}', [DownloadController::class, 'destroy']);

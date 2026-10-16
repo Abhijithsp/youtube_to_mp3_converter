@@ -14,6 +14,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
@@ -23,6 +24,11 @@ class DownloadController extends Controller
      * Most links accepted by one bulk request
      */
     private const BULK_LIMIT = 50;
+
+    /**
+     * Most songs in one ZIP download
+     */
+    private const ZIP_LIMIT = 500;
 
     public function __construct(
         private YouTubeService $youtubeService
@@ -568,6 +574,85 @@ class DownloadController extends Controller
             $this->downloadFilename($download),
             ['Content-Type' => $mimeTypes[$download->format] ?? 'application/octet-stream']
         );
+    }
+
+    /**
+     * Several finished downloads in one ZIP file (History → Select → Download ZIP)
+     */
+    public function zip(Request $request): BinaryFileResponse|JsonResponse
+    {
+        $ids = collect(explode(',', (string) $request->query('ids')))
+            ->map(fn ($id) => (int) trim($id))
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values();
+
+        if ($ids->isEmpty() || $ids->count() > self::ZIP_LIMIT) {
+            return response()->json(['message' => 'Choose between 1 and ' . self::ZIP_LIMIT . ' songs.'], 422);
+        }
+
+        if (!class_exists(\ZipArchive::class)) {
+            return response()->json(['message' => 'The PHP zip extension is not installed on this server.'], 500);
+        }
+
+        // Keep the order the songs were selected in
+        $downloads = Download::completed()->whereIn('id', $ids)->get()
+            ->filter(fn (Download $download) => $download->file_path && is_file($download->file_path))
+            ->sortBy(fn (Download $download) => $ids->search($download->id))
+            ->values();
+
+        if ($downloads->isEmpty()) {
+            return response()->json(['message' => 'None of these files exist anymore.'], 404);
+        }
+
+        $tempDir = storage_path('app/temp');
+        if (!is_dir($tempDir)) {
+            mkdir($tempDir, 0755, true);
+        }
+
+        $path = $tempDir . DIRECTORY_SEPARATOR . 'zip_' . Str::random(16) . '.zip';
+        $zip = new \ZipArchive();
+
+        if ($zip->open($path, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== true) {
+            return response()->json(['message' => 'Could not create the ZIP file.'], 500);
+        }
+
+        $used = [];
+        foreach ($downloads as $download) {
+            $name = $this->uniqueName($this->downloadFilename($download), $used);
+            $zip->addFile($download->file_path, $name);
+            // Audio is already compressed: storing is as small and much faster
+            $zip->setCompressionName($name, \ZipArchive::CM_STORE);
+        }
+
+        if (!$zip->close()) {
+            @unlink($path);
+
+            return response()->json(['message' => 'Could not create the ZIP file.'], 500);
+        }
+
+        $count = $downloads->count();
+        $fileName = config('app.name') . ' - ' . $count . ' song' . ($count === 1 ? '' : 's') . ' ' . now()->format('Y-m-d') . '.zip';
+
+        return response()->download($path, $fileName, ['Content-Type' => 'application/zip'])->deleteFileAfterSend();
+    }
+
+    /**
+     * "Song.mp3", then "Song (2).mp3" for a second song with the same name
+     */
+    private function uniqueName(string $name, array &$used): string
+    {
+        $base = pathinfo($name, PATHINFO_FILENAME);
+        $extension = pathinfo($name, PATHINFO_EXTENSION);
+        $candidate = $name;
+
+        for ($i = 2; isset($used[mb_strtolower($candidate)]); $i++) {
+            $candidate = "{$base} ({$i}).{$extension}";
+        }
+
+        $used[mb_strtolower($candidate)] = true;
+
+        return $candidate;
     }
 
     /**

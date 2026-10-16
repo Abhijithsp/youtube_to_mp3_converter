@@ -1,8 +1,15 @@
-# 🎵 YouTube to MP3 Converter (Self-Hosted)
-A  self-hosted application to download and convert YouTube videos to high-quality MP3, FLAC or WAV audio files. Built with **Laravel 13**, **Vue.js 3**, and **Tailwind CSS**.
+# 🎵 AudioFetch (Self-Hosted)
+A self-hosted application to download and convert YouTube videos to high-quality MP3, FLAC or WAV audio files. Built with **Laravel 13**, **Vue.js 3**, and **Tailwind CSS**.
+
+<a id="walkthrough"></a>
+## 🎬 Walkthrough
+[![AudioFetch walkthrough video](docs/walkthrough/04-player-waveform.png)](docs/walkthrough/AudioFetch-walkthrough.mp4)
+
+▶️ **[Watch the walkthrough video](docs/walkthrough/AudioFetch-walkthrough.mp4)** (2 min): download, player, ZIP downloads, folder picker, colour themes, notifications and the password lock. More screenshots, including phone, are in [docs/walkthrough](docs/walkthrough/README.md).
 
 
 ## 📚 Table of Contents
+- [Walkthrough](#walkthrough)
 - [About](#about)
 - [Important Disclaimer & Terms of Use](#disclaimer)
 - [Run with Docker](#docker)
@@ -35,7 +42,12 @@ In short: Use it, learn from it, and break it—but do so with caution!
 - **High Quality**: MP3 (up to 320 kbps), FLAC (lossless) and WAV (24-bit / 48 kHz).
 - **Trim & silence removal**: Keep only part of a video, and cut silent intros/outros.
 - **Clean titles & tags**: Removes "(Official Music Video)", "[HD]" and similar; tags title, artist, album, year, genre and cover art. Files are named after the title.
-- **Built-in player**: Play, seek, play all, shuffle, repeat, next/previous, media keys.
+- **Built-in player**: Play, seek on the song's waveform, play all, shuffle, repeat, next/previous, media keys.
+- **Download as ZIP**: Select several songs in History and save them as one ZIP file.
+- **Notifications**: A system notification when downloads finish or fail.
+- **Colour themes**: Light or dark, with any accent colour.
+- **Any download folder**: Browse and pick a folder (or create one) in Settings.
+- **Optional password**: Lock the app with `APP_PASSWORD` when it runs on a server.
 - **Queue System**: Background processing with retries and rate limiting.
 - **Setup checklist**: First-run check of yt-dlp, FFmpeg, Deno, the queue worker and storage, with fix commands.
 - **One-click yt-dlp update** from the Settings page.

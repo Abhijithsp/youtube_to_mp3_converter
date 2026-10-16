@@ -88,6 +88,11 @@ export const downloadAPI = {
     getDownloadUrl(id) {
         return `/api/downloads/${id}/stream`;
     },
+
+    // Several finished downloads in one ZIP file
+    getZipUrl(ids) {
+        return `/api/downloads/zip?ids=${ids.join(",")}`;
+    },
 };
 
 // Search YouTube by text

@@ -1,7 +1,7 @@
 {
-    "name": "YouTube to MP3 Converter",
-    "short_name": "YT to MP3",
-    "description": "Convert YouTube videos to MP3, FLAC or WAV with tags and cover art.",
+    "name": "AudioFetch",
+    "short_name": "AudioFetch",
+    "description": "Save YouTube audio as MP3, FLAC or WAV with tags and cover art.",
     "id": "/",
     "start_url": "/",
     "scope": "/",

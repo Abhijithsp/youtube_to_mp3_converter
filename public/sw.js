@@ -58,3 +58,21 @@ self.addEventListener('fetch', (event) => {
         );
     }
 });
+
+// Download notifications: clicking one opens (or focuses) the app on the right page
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close();
+    const url = new URL(event.notification.data?.url || '/', self.location.origin).href;
+
+    event.waitUntil(
+        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+            const client = clients.find((c) => new URL(c.url).origin === self.location.origin);
+            if (client) {
+                // The app switches page itself, so music keeps playing
+                client.postMessage({ type: 'open', url: new URL(url).pathname });
+                return client.focus();
+            }
+            return self.clients.openWindow(url);
+        }),
+    );
+});

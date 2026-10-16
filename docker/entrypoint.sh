@@ -31,5 +31,5 @@ php artisan optimize --no-interaction
 (while true; do php artisan queue:work --sleep=2 --tries=3 --no-interaction || true; sleep 2; done) &
 (while true; do php artisan schedule:work --no-interaction || true; sleep 5; done) &
 
-echo "YouTube to MP3 Converter is running on http://localhost:${APP_PORT:-8000}"
+echo "AudioFetch is running on http://localhost:${APP_PORT:-8000}"
 exec php artisan serve --host=0.0.0.0 --port=8000 --no-interaction

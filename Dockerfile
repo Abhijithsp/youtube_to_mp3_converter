@@ -1,4 +1,4 @@
-# YouTube to MP3 Converter: web server, queue worker and scheduler in one image,
+# AudioFetch: web server, queue worker and scheduler in one image,
 # with yt-dlp, FFmpeg and Deno included. See README → "Run with Docker".
 
 ARG PHP_VERSION=8.3
@@ -21,8 +21,8 @@ FROM denoland/deno:bin-${DENO_VERSION} AS deno
 FROM php:${PHP_VERSION}-cli-bookworm
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl unzip \
-    && docker-php-ext-install pdo_mysql pcntl \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl unzip libzip-dev \
+    && docker-php-ext-install pdo_mysql pcntl zip \
     && rm -rf /var/lib/apt/lists/*
 
 # Official standalone yt-dlp build: can update itself (Settings → yt-dlp → Update)

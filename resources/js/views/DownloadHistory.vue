@@ -5,6 +5,10 @@
         <AppIcon :path="mdiPlay" :size="18" />
         Play all
       </button>
+      <button v-if="total && !selecting" type="button" class="btn btn-tonal btn-sm" @click="startSelecting">
+        <AppIcon :path="mdiCheckboxMultipleMarkedOutline" :size="18" />
+        Select
+      </button>
       <button v-if="total" type="button" class="btn btn-text btn-sm text-danger" @click="clearHistory">
         <AppIcon :path="mdiDeleteSweepOutline" :size="18" />
         Clear
@@ -29,6 +33,7 @@
           <option value="">All formats</option>
           <option value="mp3">MP3</option>
           <option value="flac">FLAC</option>
+          <option value="wav">WAV</option>
         </select>
         <select v-model="sort" class="field sm:w-40" aria-label="Sort" @change="fetchHistory(1)">
           <option value="completed_at:desc">Newest</option>
@@ -38,6 +43,29 @@
           <option value="duration:desc">Longest</option>
         </select>
       </div>
+    </div>
+
+    <!-- Selection bar (History → Select) -->
+    <div
+      v-if="selecting"
+      class="card sticky top-16 z-10 mb-3 flex items-center gap-1 px-2 py-1.5 animate-fade-up md:top-3 sm:gap-2"
+      style="box-shadow: var(--md-elev-2)"
+    >
+      <button type="button" class="icon-btn" title="Stop selecting" aria-label="Stop selecting" @click="stopSelecting">
+        <AppIcon :path="mdiClose" />
+      </button>
+      <span class="min-w-0 flex-1 truncate text-sm font-medium text-fg" aria-live="polite">
+        {{ selectedCount ? `${selectedCount} selected` : 'Tap songs to select' }}
+      </span>
+      <button type="button" class="btn btn-text btn-sm" :disabled="!downloads.length" @click="togglePage">
+        <AppIcon :path="pageSelected ? mdiCheckboxMultipleBlankOutline : mdiCheckboxMultipleMarkedOutline" :size="18" />
+        <span class="hidden sm:inline">{{ pageSelected ? 'Unselect page' : 'Select page' }}</span>
+      </button>
+      <button type="button" class="btn btn-filled btn-sm" :disabled="!selectedCount" @click="downloadZip">
+        <AppIcon :path="mdiFolderZipOutline" :size="18" />
+        <span class="hidden sm:inline">Download ZIP</span>
+        <span class="sm:hidden">ZIP</span>
+      </button>
     </div>
 
     <section class="card overflow-hidden">
@@ -53,7 +81,15 @@
       />
 
       <div v-else class="divide-y divide-line" :class="loading && 'opacity-60'">
-        <DownloadRow v-for="d in downloads" :key="d.id" :download="d" :show-status="false">
+        <DownloadRow
+          v-for="d in downloads"
+          :key="d.id"
+          :download="d"
+          :show-status="false"
+          :selectable="selecting"
+          :selected="!!selected[d.id]"
+          @toggle="toggleSelected(d)"
+        >
           <template #actions>
             <button
               type="button"
@@ -95,8 +131,12 @@
 
 <script>
 import {
+  mdiCheckboxMultipleBlankOutline,
+  mdiCheckboxMultipleMarkedOutline,
   mdiChevronLeft,
   mdiChevronRight,
+  mdiClose,
+  mdiFolderZipOutline,
   mdiDeleteOutline,
   mdiPencilOutline,
   mdiDeleteSweepOutline,
@@ -135,8 +175,15 @@ export default {
       player,
       startingAll: false,
       editing: null,
+      // Selection for the ZIP download: id → true, kept across pages and searches
+      selecting: false,
+      selected: {},
+      mdiCheckboxMultipleBlankOutline,
+      mdiCheckboxMultipleMarkedOutline,
       mdiChevronLeft,
       mdiChevronRight,
+      mdiClose,
+      mdiFolderZipOutline,
       mdiDeleteOutline,
       mdiPencilOutline,
       mdiDeleteSweepOutline,
@@ -149,6 +196,14 @@ export default {
       mdiPlayCircleOutline,
       mdiTrayArrowDown,
     };
+  },
+  computed: {
+    selectedCount() {
+      return Object.keys(this.selected).length;
+    },
+    pageSelected() {
+      return this.downloads.length > 0 && this.downloads.every((d) => this.selected[d.id]);
+    },
   },
   mounted() {
     this.fetchHistory();
@@ -186,6 +241,45 @@ export default {
     },
 
     toggle,
+
+    startSelecting() {
+      this.selecting = true;
+      this.selected = {};
+    },
+
+    stopSelecting() {
+      this.selecting = false;
+      this.selected = {};
+    },
+
+    toggleSelected(download) {
+      const { [download.id]: wasSelected, ...rest } = this.selected;
+      this.selected = wasSelected ? rest : { ...this.selected, [download.id]: true };
+    },
+
+    togglePage() {
+      const selected = { ...this.selected };
+      const select = !this.pageSelected;
+      for (const d of this.downloads) {
+        if (select) selected[d.id] = true;
+        else delete selected[d.id];
+      }
+      this.selected = selected;
+    },
+
+    /** The browser saves the ZIP itself, like the single-file download */
+    downloadZip() {
+      const ids = Object.keys(this.selected);
+      if (!ids.length) return;
+      const link = document.createElement('a');
+      link.href = downloadAPI.getZipUrl(ids);
+      link.download = '';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      notify(`Preparing a ZIP of ${ids.length} song${ids.length === 1 ? '' : 's'}… it will download in a moment.`, 'success');
+      this.stopSelecting();
+    },
 
     /** Play everything matching the current search/filter, not just this page */
     async playEverything() {

@@ -156,6 +156,92 @@
         </div>
       </section>
 
+      <!-- Appearance (saved on this device) -->
+      <section class="card p-4">
+        <SectionTitle :icon="mdiPaletteOutline" title="Appearance" />
+        <p class="mt-1 text-sm text-fg-muted">Saved on this device and applied right away.</p>
+
+        <div class="mt-4 flex flex-wrap items-center gap-3">
+          <span class="field-label !mb-0 w-20">Theme</span>
+          <SegmentedControl
+            :model-value="ui.theme"
+            :options="[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]"
+            compact
+            @update:model-value="(value) => value !== ui.theme && toggleTheme()"
+          />
+        </div>
+
+        <div class="mt-4 flex flex-wrap items-start gap-3">
+          <span class="field-label !mb-0 w-20 pt-1.5">Colour</span>
+          <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2" role="radiogroup" aria-label="Accent colour">
+            <button
+              v-for="accent in accents"
+              :key="accent.name"
+              type="button"
+              role="radio"
+              :aria-checked="isAccent(accent.value)"
+              :aria-label="accent.name"
+              :title="accent.name"
+              class="grid h-8 w-8 place-items-center rounded-full text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.35),0_2px_5px_-1px_rgb(0_0_0/0.35)] transition-transform hover:scale-110"
+              :class="isAccent(accent.value) && 'ring-2 ring-fg ring-offset-2 ring-offset-surface'"
+              :style="{ background: accent.swatch || accent.value }"
+              @click="setAccent(accent.value)"
+            >
+              <AppIcon v-if="isAccent(accent.value)" :path="mdiCheck" :size="16" />
+            </button>
+
+            <!-- Any colour -->
+            <label
+              class="relative grid h-8 w-8 cursor-pointer place-items-center overflow-hidden rounded-full shadow-[inset_0_1px_0_rgb(255_255_255/0.35),0_2px_5px_-1px_rgb(0_0_0/0.35)] transition-transform hover:scale-110"
+              :class="customAccent && 'ring-2 ring-fg ring-offset-2 ring-offset-surface'"
+              :style="{ background: customAccent ? ui.accent : 'conic-gradient(#ef4444, #eab308, #22c55e, #06b6d4, #3b82f6, #a855f7, #ef4444)' }"
+              title="Pick any colour"
+            >
+              <AppIcon :path="customAccent ? mdiCheck : mdiEyedropperVariant" :size="16" class="text-white drop-shadow" />
+              <input
+                type="color"
+                class="absolute inset-0 cursor-pointer opacity-0"
+                :value="ui.accent || '#2f5dd3'"
+                aria-label="Pick any colour"
+                @input="setAccent($event.target.value)"
+              />
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <!-- Notifications (this device) -->
+      <section class="card p-4">
+        <SectionTitle :icon="mdiBellOutline" title="Notifications" />
+        <div class="mt-3 flex flex-wrap items-center gap-3">
+          <div class="min-w-0 flex-1">
+            <p class="text-sm text-fg">
+              Notify me when downloads finish
+              <span v-if="notificationsActive" class="chip ml-1 !bg-success-soft !text-success">On</span>
+            </p>
+            <p class="text-xs text-fg-muted">
+              <template v-if="!notifications.supported">This browser can't show notifications.</template>
+              <template v-else-if="!notifications.secure">Notifications need https (or localhost). Open the app over https to use them.</template>
+              <template v-else-if="notifications.permission === 'denied'">Notifications are blocked for this site. Allow them in the browser's site settings, then turn this on.</template>
+              <template v-else>A system notification, even when the app is minimised or in another tab. Keep the app open somewhere.</template>
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button v-if="notificationsActive" type="button" class="btn btn-text btn-sm" @click="sendTestNotification">Test</button>
+            <button
+              type="button"
+              class="btn btn-sm"
+              :class="notificationsActive ? 'btn-tonal' : 'btn-filled'"
+              :disabled="!notifications.supported || !notifications.secure || notifications.permission === 'denied'"
+              @click="toggleNotifications"
+            >
+              <AppIcon :path="notificationsActive ? mdiBellOffOutline : mdiBellRingOutline" :size="18" />
+              {{ notificationsActive ? 'Turn off' : 'Turn on' }}
+            </button>
+          </div>
+        </div>
+      </section>
+
       <!-- Access (password lock for servers) -->
       <section class="card p-4">
         <SectionTitle :icon="mdiShieldLockOutline" title="Access" />
@@ -192,14 +278,20 @@
 import {
   mdiAccessPointNetwork,
   mdiAlertCircle,
+  mdiBellOffOutline,
+  mdiBellOutline,
+  mdiBellRingOutline,
+  mdiCheck,
   mdiCheckCircle,
   mdiContentSave,
   mdiCookieOutline,
+  mdiEyedropperVariant,
   mdiFolderOutline,
   mdiFolderSearchOutline,
   mdiFormatTitle,
   mdiLoading,
   mdiLockOutline,
+  mdiPaletteOutline,
   mdiPlaylistMusicOutline,
   mdiShieldLockOutline,
   mdiUpdate,
@@ -210,9 +302,17 @@ import AppIcon from '../components/AppIcon.vue';
 import FolderPicker from '../components/FolderPicker.vue';
 import LinearProgress from '../components/LinearProgress.vue';
 import PageHeader from '../components/PageHeader.vue';
+import SegmentedControl from '../components/SegmentedControl.vue';
 import SetupChecklist from '../components/SetupChecklist.vue';
 import { lockAPI, settingsAPI } from '../services/api';
-import { errorMessage, notify, ui } from '../ui';
+import { ACCENTS, errorMessage, notify, setAccent, toggleTheme, ui } from '../ui';
+import {
+  disableNotifications,
+  enableNotifications,
+  notifications,
+  notificationsOn,
+  sendTestNotification,
+} from '../notifications';
 
 const SectionTitle = {
   name: 'SectionTitle',
@@ -229,7 +329,7 @@ const BROWSER_LABELS = { edge: 'Microsoft Edge', whale: 'Naver Whale' };
 
 export default {
   name: 'Settings',
-  components: { AppIcon, FolderPicker, LinearProgress, PageHeader, SectionTitle, SetupChecklist },
+  components: { AppIcon, FolderPicker, LinearProgress, PageHeader, SectionTitle, SegmentedControl, SetupChecklist },
   data() {
     return {
       form: {
@@ -253,16 +353,24 @@ export default {
       checkingYoutube: false,
       pickingFolder: false,
       ui,
+      notifications,
+      accents: ACCENTS,
       mdiAccessPointNetwork,
       mdiAlertCircle,
+      mdiBellOffOutline,
+      mdiBellOutline,
+      mdiBellRingOutline,
+      mdiCheck,
       mdiCheckCircle,
       mdiContentSave,
       mdiCookieOutline,
+      mdiEyedropperVariant,
       mdiFolderOutline,
       mdiFolderSearchOutline,
       mdiFormatTitle,
       mdiLoading,
       mdiLockOutline,
+      mdiPaletteOutline,
       mdiPlaylistMusicOutline,
       mdiShieldLockOutline,
       mdiUpdate,
@@ -270,6 +378,14 @@ export default {
     };
   },
   computed: {
+    // Colour picked with the colour picker rather than a preset
+    customAccent() {
+      return !!ui.accent && !ACCENTS.some((a) => a.value === ui.accent);
+    },
+    notificationsActive() {
+      // Reads the reactive state so the button updates after the permission prompt
+      return notifications.wanted && notifications.permission === 'granted' && notificationsOn();
+    },
     dirty() {
       return this.saved !== '' && JSON.stringify(this.form) !== this.saved;
     },
@@ -322,6 +438,27 @@ export default {
         notify(errorMessage(error, 'Could not save settings'), 'error');
       } finally {
         this.saving = false;
+      }
+    },
+
+    setAccent,
+    toggleTheme,
+    sendTestNotification,
+
+    isAccent(value) {
+      return (value || null) === (ui.accent || null);
+    },
+
+    async toggleNotifications() {
+      if (this.notificationsActive) {
+        disableNotifications();
+        notify('Notifications turned off.');
+        return;
+      }
+      if (await enableNotifications()) {
+        sendTestNotification();
+      } else {
+        notify('Notifications were not allowed.', 'error');
       }
     },
 

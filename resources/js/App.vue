@@ -9,7 +9,7 @@
         <span class="btn-filled grid h-9 w-9 shrink-0 place-items-center rounded-xl">
           <AppIcon :path="mdiMusicNote" :size="22" />
         </span>
-        <span class="hidden text-[0.9375rem] font-semibold leading-tight text-fg lg:block">YouTube to MP3</span>
+        <span class="hidden text-[0.9375rem] font-semibold leading-tight text-fg lg:block">AudioFetch</span>
       </router-link>
 
       <div class="flex flex-1 flex-col gap-1 px-3 py-2">
@@ -68,7 +68,7 @@
           <span class="btn-filled grid h-8 w-8 place-items-center rounded-lg">
             <AppIcon :path="mdiMusicNote" :size="20" />
           </span>
-          <span class="text-[0.9375rem] font-semibold text-fg">YouTube to MP3</span>
+          <span class="text-[0.9375rem] font-semibold text-fg">AudioFetch</span>
         </router-link>
         <div class="ml-auto flex items-center">
           <button v-if="ui.installPrompt" type="button" class="icon-btn !text-primary" aria-label="Install app" @click="installApp">
@@ -152,6 +152,7 @@ import PlayerBar from './components/PlayerBar.vue';
 import SnackbarHost from './components/SnackbarHost.vue';
 import WorkerBanner from './components/WorkerBanner.vue';
 import { player } from './player';
+import { checkFinishedDownloads } from './notifications';
 import { lockAPI, queueAPI } from './services/api';
 import { installApp, toggleTheme, ui } from './ui';
 
@@ -221,6 +222,7 @@ export default {
         this.activeCount = data.pending;
         // Only warn when something is actually waiting for a worker
         this.workerDown = data.worker_running === false && data.pending > 0;
+        checkFinishedDownloads(data.pending).catch(() => {});
       } catch {
         // The current page reports API errors itself
       }

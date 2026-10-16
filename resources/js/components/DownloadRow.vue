@@ -1,5 +1,22 @@
 <template>
-  <div class="flex items-center gap-3 px-3 py-2.5 sm:px-4">
+  <div
+    class="flex items-center gap-3 px-3 py-2.5 sm:px-4"
+    :class="selectable && ['cursor-pointer select-none transition-colors', selected ? 'bg-primary-soft/60' : 'hover:bg-surface-2']"
+    :role="selectable ? 'checkbox' : undefined"
+    :aria-checked="selectable ? String(selected) : undefined"
+    :tabindex="selectable ? 0 : undefined"
+    @click="selectable && $emit('toggle')"
+    @keydown.space.prevent="selectable && $emit('toggle')"
+    @keydown.enter.prevent="selectable && $emit('toggle')"
+  >
+    <input
+      v-if="selectable"
+      type="checkbox"
+      class="checkbox pointer-events-none shrink-0"
+      :checked="selected"
+      tabindex="-1"
+      aria-hidden="true"
+    />
     <div class="relative h-11 w-[4.5rem] shrink-0 overflow-hidden rounded-lg bg-surface-3 shadow-[0_2px_6px_-1px_rgb(22_30_50/0.25)] ring-1 ring-black/5 sm:h-12 sm:w-20">
       <img
         v-if="download.thumbnail_url && !thumbFailed"
@@ -45,7 +62,7 @@
       </p>
     </div>
 
-    <div v-if="$slots.actions" class="flex shrink-0 items-center gap-0.5">
+    <div v-if="$slots.actions && !selectable" class="flex shrink-0 items-center gap-0.5">
       <slot name="actions" />
     </div>
   </div>
@@ -64,7 +81,11 @@ export default {
   props: {
     download: { type: Object, required: true },
     showStatus: { type: Boolean, default: true },
+    // Selection mode (History → Select): the whole row toggles a checkbox
+    selectable: { type: Boolean, default: false },
+    selected: { type: Boolean, default: false },
   },
+  emits: ['toggle'],
   data() {
     return { mdiMusicNote, thumbFailed: false };
   },

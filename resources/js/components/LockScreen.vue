@@ -4,7 +4,7 @@
       <span class="btn-filled mx-auto grid h-12 w-12 place-items-center rounded-2xl">
         <AppIcon :path="mdiLockOutline" :size="26" />
       </span>
-      <h1 class="mt-4 text-lg font-semibold text-fg">YouTube to MP3</h1>
+      <h1 class="mt-4 text-lg font-semibold text-fg">AudioFetch</h1>
       <p class="mt-1 text-sm text-fg-muted">This app is password protected.</p>
 
       <div class="mt-5 text-left">

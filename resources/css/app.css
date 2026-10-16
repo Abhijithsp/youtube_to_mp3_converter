@@ -104,6 +104,30 @@
     color-scheme: dark;
 }
 
+/*
+ * Custom accent colour (Settings → Appearance). Set on <html> as data-accent with
+ *  --accent-raw: the colour picked
+ *  --accent:     the same colour darkened just enough to be readable on white
+ * Everything that uses the primary tokens (buttons, links, progress, player...) follows.
+ */
+:root[data-accent] {
+    --md-primary: var(--accent);
+    --md-on-primary: #ffffff;
+    --md-primary-soft: color-mix(in srgb, var(--accent) 15%, white);
+    --md-on-primary-soft: color-mix(in srgb, var(--accent) 55%, black);
+    --md-primary-glow:
+        0 1px 1px color-mix(in srgb, var(--accent) 45%, transparent),
+        0 4px 12px -2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+:root[data-accent][data-theme='dark'] {
+    --md-primary: color-mix(in srgb, var(--accent-raw) 40%, white);
+    --md-on-primary: color-mix(in srgb, var(--accent-raw) 35%, black);
+    --md-primary-soft: color-mix(in srgb, var(--accent-raw) 30%, #181b22);
+    --md-on-primary-soft: color-mix(in srgb, var(--accent-raw) 18%, white);
+    --md-primary-glow: 0 1px 2px rgb(0 0 0 / 0.5), 0 4px 14px -4px color-mix(in srgb, var(--accent-raw) 40%, transparent);
+}
+
 html,
 body {
     background: var(--md-bg);
