@@ -1,5 +1,7 @@
 # AudioFetch walkthrough
 
+https://github.com/user-attachments/assets/aa54e726-fb73-45d0-b07e-8d7a2a0d8af3
+
 **Video:** [AudioFetch-walkthrough.mp4](AudioFetch-walkthrough.mp4) (1:53, 1366×768). A guided tour with captions: download preview, History and the player, selecting songs for a ZIP, the folder picker, accent colours and dark mode, notifications, and the password lock.
 
 ## Desktop

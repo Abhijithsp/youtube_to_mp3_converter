@@ -3,9 +3,9 @@ A self-hosted application to download and convert YouTube videos to high-quality
 
 <a id="walkthrough"></a>
 ## 🎬 Walkthrough
-[![AudioFetch walkthrough video](docs/walkthrough/04-player-waveform.png)](docs/walkthrough/AudioFetch-walkthrough.mp4)
+https://github.com/user-attachments/assets/aa54e726-fb73-45d0-b07e-8d7a2a0d8af3
 
-▶️ **[Watch the walkthrough video](docs/walkthrough/AudioFetch-walkthrough.mp4)** (2 min): download, player, ZIP downloads, folder picker, colour themes, notifications and the password lock. More screenshots, including phone, are in [docs/walkthrough](docs/walkthrough/README.md).
+A 2-minute tour: download, player, ZIP downloads, folder picker, colour themes, notifications and the password lock. More screenshots, including phone, are in [docs/walkthrough](docs/walkthrough/README.md).
 
 
 ## 📚 Table of Contents
