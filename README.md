@@ -3,9 +3,9 @@ A self-hosted application to download and convert YouTube videos to high-quality
 
 <a id="walkthrough"></a>
 ## 🎬 Walkthrough
-https://github.com/user-attachments/assets/aa54e726-fb73-45d0-b07e-8d7a2a0d8af3
+https://github.com/user-attachments/assets/73c4f846-7593-4ab1-b06e-7fd8bf3b1400
 
-A 2-minute tour: download, player, ZIP downloads, folder picker, colour themes, notifications and the password lock. More screenshots, including phone, are in [docs/walkthrough](docs/walkthrough/README.md).
+A 9-minute tour: search and download, live progress, queue, player, lyrics, ringtone maker, chapters, even volume, ZIP downloads, folder picker, colour themes, notifications and the password lock. More screenshots, including phone, are in [docs/walkthrough](docs/walkthrough/README.md).
 
 
 ## 📚 Table of Contents
