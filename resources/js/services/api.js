@@ -105,9 +105,53 @@ export const downloadAPI = {
         return `/api/downloads/${id}/stream`;
     },
 
+    // Delete the original of a converted file on this computer (after asking the user)
+    deleteOriginal(id) {
+        return api.delete(`/downloads/${id}/original`);
+    },
+
     // Several finished downloads in one ZIP file
     getZipUrl(ids) {
         return `/api/downloads/zip?ids=${ids.join(",")}`;
+    },
+};
+
+// Convert your own files: uploads from the browser, or files on this computer
+export const filesAPI = {
+    options() {
+        return api.get("/files/options");
+    },
+
+    // Folders and video/audio files in a folder on this computer
+    browse(path = "") {
+        return api.get("/files/browse", { params: path ? { path } : {} });
+    },
+
+    inspect(paths) {
+        return api.post("/files/inspect", { paths });
+    },
+
+    startUpload(name, size) {
+        return api.post("/files/uploads", { name, size });
+    },
+
+    // One piece of the file as the raw request body
+    uploadChunk(id, offset, blob, { onUploadProgress, signal } = {}) {
+        return api.post(`/files/uploads/${id}/chunk`, blob, {
+            params: { offset },
+            headers: { "Content-Type": "application/octet-stream" },
+            onUploadProgress,
+            signal,
+        });
+    },
+
+    cancelUpload(id) {
+        return api.delete(`/files/uploads/${id}`);
+    },
+
+    // { items: [{ upload_id | path, title, artist, ... }], format, quality, remove_silence, normalize_volume }
+    convert(data) {
+        return api.post("/files/convert", data);
     },
 };
 
@@ -197,8 +241,9 @@ export const historyAPI = {
 
 // Dashboard
 export const dashboardAPI = {
-  getStats() {
-    return api.get('/dashboard/stats');
+  // recentAfter: hide recent downloads finished before this time (Home → Clear)
+  getStats(recentAfter = null) {
+    return api.get('/dashboard/stats', { params: recentAfter ? { recent_after: recentAfter } : {} });
   }
 };
 

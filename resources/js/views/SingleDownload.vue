@@ -1,8 +1,14 @@
 <template>
   <div class="mx-auto max-w-2xl">
-    <PageHeader title="Download" subtitle="Paste a YouTube link, or search, and save it as MP3, FLAC or WAV.">
-      <SegmentedControl v-model="mode" label="Mode" compact :options="modeOptions" :disabled="busy" />
-    </PageHeader>
+    <PageHeader title="Download" :subtitle="modeSubtitle" />
+
+    <!-- Mode tabs, as wide as the cards below -->
+    <SegmentedControl v-model="mode" class="mb-4" label="Mode" large :options="modeOptions" :disabled="busy" />
+
+    <!-- Your own files (kept alive so uploads continue while switching tabs) -->
+    <KeepAlive>
+      <FileConvert v-if="mode === 'files'" />
+    </KeepAlive>
 
     <!-- Several links at once -->
     <template v-if="mode === 'bulk'">
@@ -74,7 +80,7 @@
       </section>
     </template>
 
-    <template v-else>
+    <template v-else-if="mode === 'single'">
     <!-- Link or search -->
     <form class="card p-4" @submit.prevent="submitInput">
       <label for="url" class="field-label">YouTube link or search</label>
@@ -154,6 +160,19 @@
         </div>
       </div>
     </form>
+
+    <!-- First visit: what can be done here -->
+    <ul v-if="idle" class="mt-3 grid gap-2 animate-fade-up sm:grid-cols-3 sm:gap-3">
+      <li v-for="tip in tips" :key="tip.title" class="card flex items-start gap-3 p-3 sm:flex-col sm:p-4">
+        <span class="tile-icon h-9 w-9 shrink-0 bg-primary-soft text-on-primary-soft">
+          <AppIcon :path="tip.icon" :size="20" />
+        </span>
+        <div class="min-w-0">
+          <p class="text-sm font-medium text-fg">{{ tip.title }}</p>
+          <p class="mt-0.5 text-xs leading-relaxed text-fg-muted">{{ tip.text }}</p>
+        </div>
+      </li>
+    </ul>
 
     <!-- Search results -->
     <section v-if="!video && !fetching && (searching || results.length)" class="card mt-3 overflow-hidden animate-fade-up">
@@ -341,7 +360,10 @@ import {
   mdiChevronRight,
   mdiClose,
   mdiContentPaste,
+  mdiFileMusicOutline,
   mdiLink,
+  mdiLinkPlus,
+  mdiLinkVariant,
   mdiLoading,
   mdiMagnify,
   mdiPause,
@@ -353,10 +375,12 @@ import {
   mdiStopCircleOutline,
   mdiTrayFull,
   mdiTrayArrowDown,
+  mdiTune,
 } from '@mdi/js';
 import AppIcon from '../components/AppIcon.vue';
 import Disclosure from '../components/Disclosure.vue';
 import DownloadRow from '../components/DownloadRow.vue';
+import FileConvert from '../components/FileConvert.vue';
 import PageHeader from '../components/PageHeader.vue';
 import SegmentedControl from '../components/SegmentedControl.vue';
 import { isCurrent, player, toggle } from '../player';
@@ -365,13 +389,19 @@ import { errorMessage, extractYoutubeLinks, formatDuration, looksLikeYoutubeUrl,
 
 export default {
   name: 'SingleDownload',
-  components: { AppIcon, Disclosure, DownloadRow, PageHeader, SegmentedControl },
+  components: { AppIcon, Disclosure, DownloadRow, FileConvert, PageHeader, SegmentedControl },
   data() {
     return {
-      mode: 'single', // single | bulk
+      mode: 'single', // single | bulk | files
       modeOptions: [
-        { value: 'single', label: 'Single link' },
-        { value: 'bulk', label: 'Multiple links' },
+        { value: 'single', label: 'Single link', icon: mdiLinkVariant },
+        { value: 'bulk', label: 'Multiple links', icon: mdiLinkPlus },
+        { value: 'files', label: 'Files', icon: mdiFileMusicOutline },
+      ],
+      tips: [
+        { icon: mdiLinkVariant, title: 'Paste a link', text: 'Any YouTube, Shorts or YouTube Music link. Playlist links open the Playlist page.' },
+        { icon: mdiMagnify, title: 'Or search', text: 'Type a song or artist, press Enter and pick a result.' },
+        { icon: mdiTune, title: 'Choose how', text: 'MP3 up to 320k, or lossless FLAC and WAV. Trim, tag and even out the volume.' },
       ],
       bulkText: '',
       bulkResult: null,
@@ -429,6 +459,17 @@ export default {
     };
   },
   computed: {
+    modeSubtitle() {
+      return {
+        single: 'Paste a YouTube link or search, and save it as MP3, FLAC or WAV.',
+        bulk: 'Paste several YouTube links and queue them all at once.',
+        files: 'Convert your own video and audio files to MP3, FLAC or WAV.',
+      }[this.mode];
+    },
+    // Nothing typed or found yet: show what the page can do
+    idle() {
+      return !this.input && !this.video && !this.fetching && !this.searching && !this.results.length && !this.download && !this.inputError;
+    },
     bulkLinks() {
       return extractYoutubeLinks(this.bulkText);
     },
@@ -489,6 +530,8 @@ export default {
     // Opening a search from Home (?q=) or a link (?url=)
     '$route.query': {
       handler(query) {
+        // /download?mode=files opens the Files tab
+        if (query.mode === 'files') this.mode = 'files';
         if (query.url && query.url !== this.input) {
           this.input = String(query.url);
           this.fetchVideoInfo();

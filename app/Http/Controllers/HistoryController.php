@@ -29,6 +29,13 @@ class HistoryController extends Controller
             $query->where('format', $request->format);
         }
 
+        // Filter by where it came from: YouTube, or converted files
+        if ($request->input('source') === 'youtube') {
+            $query->where('source', Download::SOURCE_YOUTUBE);
+        } elseif ($request->input('source') === 'files') {
+            $query->whereIn('source', [Download::SOURCE_UPLOAD, Download::SOURCE_LOCAL]);
+        }
+
         // Sort
         $sortField = $request->input('sort_by', 'completed_at');
         $sortDir = $request->input('sort_dir', 'desc');

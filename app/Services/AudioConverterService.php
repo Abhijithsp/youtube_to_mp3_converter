@@ -32,6 +32,7 @@ class AudioConverterService
      *
      * Options: trim_start / trim_end (seconds), remove_silence (bool), normalize_volume (bool),
      * duration (seconds, used to decide on trailing-silence removal).
+     * convert() also takes timeout (seconds, default 600).
      */
     public function buildCommand(string $inputPath, string $outputPath, string $format = 'mp3', int $quality = 320, array $options = []): array
     {
@@ -126,15 +127,16 @@ class AudioConverterService
             }
 
             $command = $this->buildCommand($inputPath, $outputPath, $format, $quality, $options);
+            $timeout = (int) ($options['timeout'] ?? 600);
 
             if ($progressCallback) {
-                $result = Process::timeout(600)->run($command, function (string $type, string $output) use ($progressCallback) {
+                $result = Process::timeout($timeout)->run($command, function (string $type, string $output) use ($progressCallback) {
                     if ($progress = $this->parseProgress($output)) {
                         $progressCallback(...$progress);
                     }
                 });
             } else {
-                $result = Process::timeout(600)->run($command);
+                $result = Process::timeout($timeout)->run($command);
             }
 
             if (!$result->successful()) {

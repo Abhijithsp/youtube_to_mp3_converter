@@ -38,9 +38,9 @@ export function dismissSnackbar() {
  * Promise-based confirm dialog. Resolves to false when cancelled, true when
  * confirmed, or { checked } when a checkbox option was offered.
  */
-export function confirmDialog({ title, message = '', confirmLabel = 'Confirm', danger = false, checkbox = null }) {
+export function confirmDialog({ title, message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false, checkbox = null }) {
     return new Promise((resolve) => {
-        ui.dialog = { title, message, confirmLabel, danger, checkbox, checked: false, resolve };
+        ui.dialog = { title, message, confirmLabel, cancelLabel, danger, checkbox, checked: false, resolve };
     });
 }
 

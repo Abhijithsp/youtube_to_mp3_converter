@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Download;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use App\Services\DiskSpaceService;
 
@@ -13,8 +14,12 @@ class DashboardController extends Controller
         protected DiskSpaceService $diskSpaceService
     ) {}
 
-    public function stats()
+    public function stats(Request $request)
     {
+        // "Clear" on the Home page only hides what was there: newer downloads still show.
+        // The browser remembers the moment; nothing is deleted.
+        $request->validate(['recent_after' => 'nullable|date']);
+
         $totalDownloads = Download::completed()->count();
         $totalStorageBytes = Download::completed()->sum('file_size'); // Assuming file_size is in bytes
         
@@ -26,6 +31,7 @@ class DashboardController extends Controller
         
         // Get recent downloads
         $recentDownloads = Download::completed()
+            ->when($request->filled('recent_after'), fn ($query) => $query->where('completed_at', '>', Carbon::parse($request->recent_after)))
             ->orderBy('completed_at', 'desc')
             ->limit(5)
             ->get();

@@ -166,6 +166,22 @@ class SettingsAndDashboardApiTest extends TestCase
             ->assertJsonPath('recent_downloads.0.title', 'Newest');
     }
 
+    public function test_clearing_home_only_hides_recent_downloads(): void
+    {
+        Download::factory()->create(['status' => 'completed', 'title' => 'Old song', 'completed_at' => now()->subHour()]);
+        Download::factory()->create(['status' => 'completed', 'title' => 'Cleared song', 'completed_at' => now()->subMinutes(30)]);
+        Download::factory()->create(['status' => 'completed', 'title' => 'New song', 'completed_at' => now()]);
+
+        $clearedAt = now()->subMinutes(30)->toISOString();
+        $response = $this->getJson('/api/dashboard/stats?recent_after=' . urlencode($clearedAt))->assertOk();
+
+        $this->assertSame(['New song'], array_column($response->json('recent_downloads'), 'title'));
+        // Nothing was deleted: the totals and History still count every song
+        $this->assertSame(3, $response->json('total_downloads'));
+        $this->assertCount(3, $this->getJson('/api/history')->json('data'));
+        $this->assertCount(3, $this->getJson('/api/dashboard/stats')->json('recent_downloads'));
+    }
+
     public function test_the_spa_and_health_check_load(): void
     {
         $this->withoutVite();

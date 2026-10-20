@@ -43,6 +43,11 @@
       <div class="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-fg-muted">
         <StatusChip v-if="showStatus" :status="download.status" :text="download.status_text || ''" class="shrink-0" />
         <span class="chip shrink-0">{{ download.format }}<template v-if="download.format === 'mp3'"> · {{ download.quality }}k</template></span>
+        <!-- Where it came from: a YouTube video, or a file the user converted -->
+        <span class="chip shrink-0 !normal-case !tracking-normal" :title="source.title">
+          <AppIcon :path="source.icon" :size="13" :class="source.iconClass" />
+          <span class="hidden sm:inline">{{ source.label }}</span>
+        </span>
         <span class="truncate">{{ meta }}</span>
       </div>
 
@@ -65,7 +70,7 @@
 </template>
 
 <script>
-import { mdiMusicNote } from '@mdi/js';
+import { mdiFileMusicOutline, mdiMusicNote, mdiYoutube } from '@mdi/js';
 import AppIcon from './AppIcon.vue';
 import LinearProgress from './LinearProgress.vue';
 import StatusChip from './StatusChip.vue';
@@ -86,6 +91,18 @@ export default {
     return { mdiMusicNote, thumbFailed: false };
   },
   computed: {
+    source() {
+      const d = this.download;
+      if (d.source === 'upload' || d.source === 'local') {
+        return {
+          label: 'Local file',
+          title: d.source_name ? `Converted from ${d.source_name}` : 'Converted from a file',
+          icon: mdiFileMusicOutline,
+          iconClass: 'text-primary',
+        };
+      }
+      return { label: 'YouTube', title: 'Downloaded from YouTube', icon: mdiYoutube, iconClass: 'text-danger' };
+    },
     active() {
       return ['pending', 'processing'].includes(this.download.status);
     },

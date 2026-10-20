@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\DownloadController;
+use App\Http\Controllers\FileConvertController;
 use App\Http\Controllers\FolderController;
 use App\Http\Controllers\LockController;
 use App\Http\Middleware\RequireAppPassword;
@@ -39,7 +40,20 @@ Route::middleware(RequireAppPassword::class)->group(function () {
         Route::get('/{download}/lyrics', [DownloadController::class, 'lyrics']);
         Route::get('/{download}/ringtone', [DownloadController::class, 'ringtone']);
         Route::post('/{download}/reveal', [DownloadController::class, 'reveal']);
+        Route::get('/{download}/cover', [DownloadController::class, 'cover']);
+        Route::delete('/{download}/original', [DownloadController::class, 'destroyOriginal']);
         Route::get('/{download}/stream', [DownloadController::class, 'stream'])->name('downloads.stream');
+    });
+
+    // Convert your own files: uploaded from the browser, or from a folder on this computer
+    Route::prefix('files')->group(function () {
+        Route::get('/options', [FileConvertController::class, 'options']);
+        Route::get('/browse', [FolderController::class, 'files']);
+        Route::post('/inspect', [FileConvertController::class, 'inspect']);
+        Route::post('/uploads', [FileConvertController::class, 'startUpload']);
+        Route::post('/uploads/{upload}/chunk', [FileConvertController::class, 'uploadChunk']);
+        Route::delete('/uploads/{upload}', [FileConvertController::class, 'cancelUpload']);
+        Route::post('/convert', [FileConvertController::class, 'convert']);
     });
 
     // Search YouTube by text

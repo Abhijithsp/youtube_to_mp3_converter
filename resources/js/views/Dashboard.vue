@@ -53,7 +53,13 @@
     <section class="card overflow-hidden">
       <div class="flex items-center justify-between border-b border-line px-4 py-3">
         <h2 class="card-title">Recent downloads</h2>
-        <router-link to="/history" class="btn btn-text btn-sm -mr-2">View all</router-link>
+        <div class="-mr-2 flex items-center gap-1">
+          <button v-if="recent.length" type="button" class="btn btn-text btn-sm" title="Hide these from Home (they stay in History)" @click="clearRecent">
+            <AppIcon :path="mdiNotificationClearAll" :size="18" />
+            Clear
+          </button>
+          <router-link to="/history" class="btn btn-text btn-sm">View all</router-link>
+        </div>
       </div>
 
       <div v-if="loading" class="divide-y divide-line">
@@ -64,6 +70,14 @@
             <div class="h-3 w-1/3 animate-pulse rounded bg-surface-3" />
           </div>
         </div>
+      </div>
+
+      <div v-else-if="!recent.length && clearedAt && stats.total_downloads" class="flex flex-col items-center gap-3 px-4 py-8 text-center">
+        <p class="text-sm text-fg-muted">Cleared. New downloads will show up here.<br />Your songs are still in History.</p>
+        <button type="button" class="btn btn-tonal btn-sm" @click="showRecentAgain">
+          <AppIcon :path="mdiRestore" :size="18" />
+          Show recent again
+        </button>
       </div>
 
       <EmptyState
@@ -105,8 +119,10 @@ import {
   mdiMagnify,
   mdiMusicBoxMultipleOutline,
   mdiMusicNoteOff,
+  mdiNotificationClearAll,
   mdiPauseCircle,
   mdiPlayCircleOutline,
+  mdiRestore,
   mdiTimerSandEmpty,
   mdiTrayArrowDown,
 } from '@mdi/js';
@@ -128,12 +144,16 @@ export default {
       stats: {},
       loading: true,
       showSetup: false,
+      // Home → Clear: recent downloads finished up to this time are hidden here (this browser only)
+      clearedAt: readStorage('home-cleared-at'),
       mdiArrowRight,
       mdiLink,
       mdiMagnify,
       mdiMusicNoteOff,
+      mdiNotificationClearAll,
       mdiPauseCircle,
       mdiPlayCircleOutline,
+      mdiRestore,
       mdiTrayArrowDown,
     };
   },
@@ -166,7 +186,7 @@ export default {
 
     async fetchStats() {
       try {
-        const { data } = await dashboardAPI.getStats();
+        const { data } = await dashboardAPI.getStats(this.clearedAt);
         this.stats = data;
       } catch (error) {
         notify(errorMessage(error, 'Could not load the dashboard'), 'error');
@@ -174,6 +194,21 @@ export default {
         this.loading = false;
       }
     },
+    /** Hide the current recent downloads from Home; nothing is deleted */
+    clearRecent() {
+      // The newest one's server time, so the computer's clock doesn't matter
+      this.clearedAt = this.recent[0].completed_at;
+      writeStorage('home-cleared-at', this.clearedAt);
+      this.stats = { ...this.stats, recent_downloads: [] };
+      notify('Cleared from Home. The songs are still in History.');
+    },
+
+    showRecentAgain() {
+      this.clearedAt = null;
+      writeStorage('home-cleared-at', '');
+      this.fetchStats();
+    },
+
     start() {
       if (!this.isUrl) {
         this.$router.push({ path: '/download', query: { q: this.url } });

@@ -1,5 +1,9 @@
 # AudioFetch walkthrough
 
+**Short clips per feature** (search, editing, multiple links, converting your own files, History, player, ringtones, Home, Settings, phone) are in the [main README](../../README.md#walkthrough), as GIFs in [clips](clips/). They show the current design, including the Files tab.
+
+The full tour below was recorded earlier and does not include converting your own files.
+
 https://github.com/user-attachments/assets/73c4f846-7593-4ab1-b06e-7fd8bf3b1400
 
 **Video:** [AudioFetch-walkthrough.mp4](AudioFetch-walkthrough.mp4) (8:54, 1366×768). A guided tour with captions, recorded in the real app while downloading three songs:

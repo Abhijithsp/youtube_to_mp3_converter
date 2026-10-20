@@ -28,14 +28,20 @@
           @input="debouncedFetch"
         />
       </div>
-      <div class="flex gap-2">
+      <!-- Phone: format and source side by side, sort below -->
+      <div class="grid grid-cols-2 gap-2 sm:flex">
         <select v-model="format" class="field sm:w-36" aria-label="Format" @change="fetchHistory(1)">
           <option value="">All formats</option>
           <option value="mp3">MP3</option>
           <option value="flac">FLAC</option>
           <option value="wav">WAV</option>
         </select>
-        <select v-model="sort" class="field sm:w-40" aria-label="Sort" @change="fetchHistory(1)">
+        <select v-model="source" class="field sm:w-40" aria-label="Source" @change="fetchHistory(1)">
+          <option value="">All sources</option>
+          <option value="youtube">YouTube</option>
+          <option value="files">Local files</option>
+        </select>
+        <select v-model="sort" class="field col-span-2 sm:w-40" aria-label="Sort" @change="fetchHistory(1)">
           <option value="completed_at:desc">Newest</option>
           <option value="completed_at:asc">Oldest</option>
           <option value="title:asc">Title A–Z</option>
@@ -75,9 +81,9 @@
 
       <EmptyState
         v-else-if="!downloads.length"
-        :icon="search || format ? mdiMagnifyClose : mdiHistory"
-        :title="search || format ? 'No matches' : 'No downloads yet'"
-        :text="search || format ? 'Try a different search or filter.' : 'Finished downloads are listed here.'"
+        :icon="filtered ? mdiMagnifyClose : mdiHistory"
+        :title="filtered ? 'No matches' : 'No downloads yet'"
+        :text="filtered ? 'Try a different search or filter.' : 'Finished downloads are listed here.'"
       />
 
       <div v-else class="divide-y divide-line" :class="loading && 'opacity-60'">
@@ -111,6 +117,9 @@
               </button>
               <button v-if="canOpenFolder" type="button" class="icon-btn" title="Show in folder" aria-label="Show in folder" @click="reveal(d)">
                 <AppIcon :path="mdiFolderOpenOutline" />
+              </button>
+              <button v-if="d.original_available" type="button" class="icon-btn" title="Delete original file" aria-label="Delete original file" @click="deleteOriginal(d)">
+                <AppIcon :path="mdiFileRemoveOutline" />
               </button>
               <a :href="d.download_url" class="icon-btn" title="Save file" aria-label="Save file">
                 <AppIcon :path="mdiTrayArrowDown" />
@@ -170,6 +179,7 @@ import {
   mdiChevronLeft,
   mdiChevronRight,
   mdiClose,
+  mdiFileRemoveOutline,
   mdiFolderOpenOutline,
   mdiFolderZipOutline,
   mdiDeleteOutline,
@@ -204,6 +214,8 @@ export default {
       loading: true,
       search: '',
       format: '',
+      // '' | youtube | files (converted from the user's own files)
+      source: '',
       sort: 'completed_at:desc',
       page: 1,
       lastPage: 1,
@@ -226,6 +238,7 @@ export default {
       mdiChevronLeft,
       mdiChevronRight,
       mdiClose,
+      mdiFileRemoveOutline,
       mdiFolderOpenOutline,
       mdiFolderZipOutline,
       mdiDeleteOutline,
@@ -243,6 +256,9 @@ export default {
     };
   },
   computed: {
+    filtered() {
+      return !!(this.search || this.format || this.source);
+    },
     selectedCount() {
       return Object.keys(this.selected).length;
     },
@@ -252,6 +268,7 @@ export default {
         { label: 'Make ringtone', icon: mdiBellRingOutline, run: (d) => (this.ringtoneFor = d) },
         { label: 'Save file', icon: mdiTrayArrowDown, run: (d) => window.location.assign(d.download_url) },
         ...(this.canOpenFolder ? [{ label: 'Show in folder', icon: mdiFolderOpenOutline, run: (d) => this.reveal(d) }] : []),
+        ...(this.actionsFor?.original_available ? [{ label: 'Delete original file', icon: mdiFileRemoveOutline, danger: true, run: (d) => this.deleteOriginal(d) }] : []),
         { label: 'Delete', icon: mdiDeleteOutline, danger: true, run: (d) => this.remove(d) },
       ];
     },
@@ -274,6 +291,7 @@ export default {
           page,
           search: this.search || undefined,
           format: this.format || undefined,
+          source: this.source || undefined,
           sort_by: sortBy,
           sort_dir: sortDir,
           per_page: 25,
@@ -358,6 +376,7 @@ export default {
         const { data } = await historyAPI.getAll({
           search: this.search || undefined,
           format: this.format || undefined,
+          source: this.source || undefined,
           sort_by: sortBy,
           sort_dir: sortDir,
           per_page: 100,
@@ -394,6 +413,25 @@ export default {
         this.fetchHistory(this.downloads.length === 1 && this.page > 1 ? this.page - 1 : this.page);
       } catch (error) {
         notify(errorMessage(error, 'Could not delete'), 'error');
+      }
+    },
+
+    /** The file a conversion was made from; only deleted when the user asks */
+    async deleteOriginal(download) {
+      const ok = await confirmDialog({
+        title: 'Delete the original file?',
+        message: `"${download.source_name}" will be deleted from this computer. The converted ${download.format.toUpperCase()} stays in History.`,
+        confirmLabel: 'Delete original',
+        cancelLabel: 'Keep it',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        const { data } = await downloadAPI.deleteOriginal(download.id);
+        notify(data.message, 'success');
+        this.downloads = this.downloads.map((d) => (d.id === download.id ? data.download : d));
+      } catch (error) {
+        notify(errorMessage(error, 'Could not delete the original'), 'error');
       }
     },
 

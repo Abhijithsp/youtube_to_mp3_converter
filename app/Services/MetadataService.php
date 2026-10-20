@@ -66,8 +66,9 @@ class MetadataService
             }
 
             // Replace original with tagged file
-            unlink($filePath);
-            rename($tempPath, $filePath);
+            if (!$this->replaceFile($tempPath, $filePath)) {
+                throw new Exception('Permission denied while replacing the file');
+            }
 
             return true;
         } catch (Exception $e) {
@@ -154,9 +155,11 @@ class MetadataService
             }
 
             if (file_exists($tempPath)) {
-                unlink($audioPath);
-                rename($tempPath, $audioPath);
-                return true;
+                if ($this->replaceFile($tempPath, $audioPath)) {
+                    return true;
+                }
+
+                @unlink($tempPath);
             }
 
             return false;
@@ -277,13 +280,13 @@ class MetadataService
         }
 
         // A file that is playing can be locked (Windows): keep the original then
-        if (!@unlink($filePath)) {
+        if (!$this->replaceFile($tempPath, $filePath)) {
             @unlink($tempPath);
 
             return false;
         }
 
-        return rename($tempPath, $filePath);
+        return true;
     }
 
     private function syncsafeDecode(string $bytes): int
@@ -299,6 +302,26 @@ class MetadataService
     private function syncsafeEncode(int $size): string
     {
         return chr(($size >> 21) & 0x7F) . chr(($size >> 14) & 0x7F) . chr(($size >> 7) & 0x7F) . chr($size & 0x7F);
+    }
+
+    /**
+     * Move the rewritten temp file over the original in one step. rename() replaces the
+     * target on every system, so the song never goes missing in between (deleting first
+     * and renaming after could leave no file at all when Windows still held the old one).
+     * Virus scanners and media players can hold a file briefly, so it is tried a few times.
+     */
+    private function replaceFile(string $tempPath, string $targetPath): bool
+    {
+        for ($attempt = 1; $attempt <= 5; $attempt++) {
+            if (@rename($tempPath, $targetPath)) {
+                return true;
+            }
+
+            clearstatcache(true, $targetPath);
+            usleep(100_000 * $attempt);
+        }
+
+        return false;
     }
 
     /**

@@ -56,6 +56,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | File Conversion
+    |--------------------------------------------------------------------------
+    |
+    | Largest video or audio file (in MB) that can be uploaded from the browser
+    | for conversion. Files picked from a folder on this computer are read in
+    | place and have no limit.
+    |
+    */
+    'max_upload_mb' => env('MAX_UPLOAD_MB', 4096),
+
+    /*
+    |--------------------------------------------------------------------------
     | Lyrics
     |--------------------------------------------------------------------------
     |

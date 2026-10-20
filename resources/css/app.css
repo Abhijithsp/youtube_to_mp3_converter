@@ -384,6 +384,28 @@ body {
         padding: 0 0.875rem;
         font-size: 0.75rem;
     }
+    .seg-lg {
+        padding: 4px;
+        gap: 4px;
+        border-radius: 1.25rem;
+    }
+    .seg-lg button {
+        flex-direction: column;
+        gap: 0.125rem;
+        height: 3.5rem;
+        padding: 0 0.5rem;
+        border-radius: 1rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    @media (min-width: 640px) {
+        .seg-lg button {
+            flex-direction: row;
+            gap: 0.5rem;
+            height: 2.875rem;
+            font-size: 0.875rem;
+        }
+    }
     .seg button:not(:disabled):hover {
         color: var(--md-fg);
     }

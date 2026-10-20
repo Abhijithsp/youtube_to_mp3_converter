@@ -20,7 +20,7 @@
         tabindex="-1"
       >
         <h2 id="dialog-title" class="text-base font-semibold text-fg">{{ ui.dialog.title }}</h2>
-        <p v-if="ui.dialog.message" class="mt-2 text-sm text-fg-muted">{{ ui.dialog.message }}</p>
+        <p v-if="ui.dialog.message" class="mt-2 whitespace-pre-line text-sm text-fg-muted">{{ ui.dialog.message }}</p>
 
         <label v-if="ui.dialog.checkbox" class="mt-4 flex cursor-pointer items-center gap-3 text-sm text-fg">
           <input v-model="ui.dialog.checked" type="checkbox" class="checkbox" />
@@ -28,7 +28,7 @@
         </label>
 
         <div class="mt-5 flex justify-end gap-2">
-          <button type="button" class="btn btn-text" @click="closeDialog(false)">Cancel</button>
+          <button type="button" class="btn btn-text" @click="closeDialog(false)">{{ ui.dialog.cancelLabel || 'Cancel' }}</button>
           <button
             ref="confirm"
             type="button"

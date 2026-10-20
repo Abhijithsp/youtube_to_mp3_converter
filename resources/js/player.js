@@ -25,6 +25,9 @@ export const player = reactive({
 // Original order, restored when shuffle is switched off
 let orderedQueue = [];
 
+// Whether the current track has already been reloaded once after a playback error
+let retried = false;
+
 function readStored(key, fallback) {
     try {
         return localStorage.getItem(key) ?? fallback;
@@ -70,6 +73,19 @@ audio.addEventListener('ended', () => {
 });
 audio.addEventListener('error', () => {
     if (!player.track || !audio.getAttribute('src')) return;
+
+    // A replayed song can get an empty response from a busy single-threaded server
+    // (php artisan serve on Windows). Ask once more with a fresh request before giving up.
+    if (!retried) {
+        retried = true;
+        const resumeAt = player.currentTime;
+        const url = player.track.download_url;
+        audio.src = `${url}${url.includes('?') ? '&' : '?'}retry=${Date.now()}`;
+        if (resumeAt > 0) audio.addEventListener('loadedmetadata', () => (audio.currentTime = resumeAt), { once: true });
+        audio.play().catch(() => (player.loading = false));
+        return;
+    }
+
     player.loading = false;
     player.playing = false;
     notify(`"${player.track.title}" could not be played. It may have been moved or deleted.`, 'error');
@@ -82,6 +98,7 @@ export function isCurrent(download) {
 }
 
 function load(download) {
+    retried = false;
     player.track = download;
     player.currentTime = 0;
     player.duration = download.duration || 0;

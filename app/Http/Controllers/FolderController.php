@@ -3,17 +3,22 @@
 namespace App\Http\Controllers;
 
 use App\Models\Setting;
+use App\Services\LocalFileService;
+use App\Support\LocalFileAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
 /**
  * Folder picker for the download folder: lists folders on the machine the app
- * runs on (your PC, or the server when hosted).
+ * runs on (your PC, or the server when hosted). Also lists video and audio files
+ * for converting files on this computer.
  */
 class FolderController extends Controller
 {
     private const MAX_FOLDERS = 500;
+
+    private const MAX_FILES = 1000;
 
     public function index(Request $request): JsonResponse
     {
@@ -40,6 +45,19 @@ class FolderController extends Controller
             'places' => $this->places(),
             'separator' => DIRECTORY_SEPARATOR,
         ]);
+    }
+
+    /**
+     * A folder's sub-folders and its video/audio files, for picking files to convert
+     */
+    public function files(Request $request): JsonResponse
+    {
+        abort_unless(LocalFileAccess::allowed($request), 403, LocalFileAccess::DENIED);
+
+        $listing = $this->index($request)->getData(true);
+        $listing['files'] = $this->mediaFiles($listing['path']);
+
+        return response()->json($listing);
     }
 
     public function store(Request $request): JsonResponse
@@ -97,6 +115,40 @@ class FolderController extends Controller
     }
 
     /**
+     * Video and audio files in $path, sorted by name
+     */
+    private function mediaFiles(string $path): array
+    {
+        $files = [];
+
+        foreach (@scandir($path) ?: [] as $name) {
+            if (str_starts_with($name, '.') || !LocalFileService::isMediaName($name)) {
+                continue;
+            }
+
+            $full = $this->join($path, $name);
+            if (!@is_file($full)) {
+                continue;
+            }
+
+            $files[] = [
+                'name' => $name,
+                'path' => $full,
+                'size' => (int) @filesize($full),
+                'kind' => in_array(strtolower(pathinfo($name, PATHINFO_EXTENSION)), LocalFileService::VIDEO_EXTENSIONS, true) ? 'video' : 'audio',
+            ];
+
+            if (count($files) >= self::MAX_FILES) {
+                break;
+            }
+        }
+
+        usort($files, fn ($a, $b) => strnatcasecmp($a['name'], $b['name']));
+
+        return $files;
+    }
+
+    /**
      * Shortcuts: the current and default download folders, home, Music and the drives / root
      */
     private function places(): array
@@ -108,6 +160,8 @@ class FolderController extends Controller
             ['label' => 'App storage', 'path' => Setting::absolutePath(config('youtube-converter.download_path'))],
             ['label' => 'Home', 'path' => $home],
             ['label' => 'Music', 'path' => $home ? $this->join($home, 'Music') : null],
+            ['label' => 'Videos', 'path' => $home ? $this->join($home, 'Videos') : null],
+            ['label' => 'Downloads', 'path' => $home ? $this->join($home, 'Downloads') : null],
             ['label' => 'Docker volume', 'path' => '/downloads'],
         ];
 

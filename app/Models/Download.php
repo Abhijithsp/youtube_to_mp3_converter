@@ -2,6 +2,9 @@
 
 namespace App\Models;
 
+use App\Jobs\ConvertLocalFileJob;
+use App\Jobs\DownloadYoutubeAudioJob;
+use App\Support\UploadStore;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -28,8 +31,21 @@ class Download extends Model
 
     public const LOSSLESS_FORMATS = ['flac', 'wav'];
 
+    /**
+     * Where the audio came from: a YouTube video, a file sent from the browser,
+     * or a file on the computer running the app
+     */
+    public const SOURCE_YOUTUBE = 'youtube';
+
+    public const SOURCE_UPLOAD = 'upload';
+
+    public const SOURCE_LOCAL = 'local';
+
     protected $fillable = [
         'user_id',
+        'source',
+        'source_path',
+        'source_name',
         'youtube_url',
         'youtube_id',
         'title',
@@ -62,7 +78,12 @@ class Download extends Model
         'completed_at',
     ];
 
-    protected $appends = ['download_url'];
+    protected $attributes = ['source' => self::SOURCE_YOUTUBE];
+
+    protected $appends = ['download_url', 'original_available'];
+
+    // Paths on the computer stay on the server; the UI only needs the file name
+    protected $hidden = ['source_path'];
 
     protected $casts = [
         'quality' => 'string',
@@ -93,6 +114,53 @@ class Download extends Model
                 ? route('downloads.stream', $this)
                 : null
         );
+    }
+
+    /**
+     * A converted file from this computer that is still there, so the UI can offer to delete it
+     */
+    protected function originalAvailable(): Attribute
+    {
+        return Attribute::get(
+            fn () => $this->source === self::SOURCE_LOCAL
+                && $this->source_path
+                && $this->source_path !== $this->file_path
+                && is_file($this->source_path)
+        );
+    }
+
+    protected static function booted(): void
+    {
+        // Cover art taken from a converted file, and an upload still waiting for its
+        // conversion, live in the app's storage. Files on this computer are left alone.
+        static::deleted(function (Download $download) {
+            @unlink($download->coverPath());
+
+            if ($download->source === self::SOURCE_UPLOAD) {
+                app(UploadStore::class)->deleteFor($download->source_path);
+            }
+        });
+    }
+
+    public function isConvertedFile(): bool
+    {
+        return in_array($this->source, [self::SOURCE_UPLOAD, self::SOURCE_LOCAL], true);
+    }
+
+    /**
+     * The queue job that makes this download's file
+     */
+    public function job(): DownloadYoutubeAudioJob|ConvertLocalFileJob
+    {
+        return $this->isConvertedFile() ? new ConvertLocalFileJob($this) : new DownloadYoutubeAudioJob($this);
+    }
+
+    /**
+     * Cover image taken from a converted file (embedded art or a video frame)
+     */
+    public function coverPath(): string
+    {
+        return storage_path('app' . DIRECTORY_SEPARATOR . 'covers' . DIRECTORY_SEPARATOR . $this->getKey() . '.jpg');
     }
 
     // Relationships

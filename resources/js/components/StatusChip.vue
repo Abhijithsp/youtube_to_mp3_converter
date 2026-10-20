@@ -20,6 +20,7 @@ const STYLES = {
 // The job's status text ("Converting to mp3... 40%") → the step it is on
 const STEPS = [
   [/fetching video|video info/i, 'Getting info'],
+  [/reading file/i, 'Reading file'],
   [/download/i, 'Downloading'],
   [/conver/i, 'Converting'],
   [/metadata|tag|cover/i, 'Tagging'],

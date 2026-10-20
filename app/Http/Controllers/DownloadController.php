@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Process;
 use App\Services\YouTubeService;
 use App\Models\Setting;
 use App\Support\FileExplorer;
+use App\Support\LocalFileAccess;
 use App\Support\FileName;
 use App\Support\TrackTitle;
 use Illuminate\Http\Request;
@@ -58,6 +59,11 @@ class DownloadController extends Controller
         // Filter by status; accepts a comma separated list, e.g. status=pending,processing
         if ($request->filled('status')) {
             $query->whereIn('status', explode(',', (string) $request->status));
+        }
+
+        // Specific downloads, e.g. ids=4,5,6 (the Files tab follows its conversions)
+        if ($request->filled('ids')) {
+            $query->whereIn('id', array_map('intval', explode(',', (string) $request->ids)));
         }
 
         // Search by title or artist
@@ -525,7 +531,8 @@ class DownloadController extends Controller
                 'conversion_progress' => 0,
             ]);
 
-            DownloadYoutubeAudioJob::dispatch($download);
+            // YouTube download or file conversion
+            dispatch($download->job());
 
             return response()->json([
                 'success' => true,
@@ -602,6 +609,46 @@ class DownloadController extends Controller
             $this->downloadFilename($download),
             ['Content-Type' => $mimeTypes[$download->format] ?? 'application/octet-stream']
         );
+    }
+
+    /**
+     * Cover picture taken from a converted file (YouTube downloads link to YouTube's thumbnail)
+     */
+    public function cover(Download $download): BinaryFileResponse
+    {
+        abort_unless(is_file($download->coverPath()), 404);
+
+        return response()->file($download->coverPath(), [
+            'Content-Type' => 'image/jpeg',
+            'Cache-Control' => 'private, max-age=31536000',
+        ]);
+    }
+
+    /**
+     * Delete the original of a converted file on this computer, once the user chose to
+     * after the conversion. Only the file that was converted can be removed this way.
+     */
+    public function destroyOriginal(Request $request, Download $download): JsonResponse
+    {
+        abort_unless(LocalFileAccess::allowed($request), 403, LocalFileAccess::DENIED);
+
+        if ($download->source !== Download::SOURCE_LOCAL || $download->status !== 'completed') {
+            return response()->json(['message' => 'Only originals of finished conversions can be deleted.'], 422);
+        }
+
+        if (!$download->original_available) {
+            $download->update(['source_path' => null]);
+
+            return response()->json(['message' => 'The original file is already gone.', 'download' => $download->fresh()]);
+        }
+
+        if (!@unlink($download->source_path)) {
+            return response()->json(['message' => 'The original could not be deleted. Is it open in another app?'], 409);
+        }
+
+        $download->update(['source_path' => null]);
+
+        return response()->json(['message' => 'Original deleted.', 'download' => $download->fresh()]);
     }
 
     /**
