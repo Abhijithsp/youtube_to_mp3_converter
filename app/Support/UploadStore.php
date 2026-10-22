@@ -26,7 +26,8 @@ class UploadStore
 
     public static function root(): string
     {
-        return storage_path('app' . DIRECTORY_SEPARATOR . 'uploads');
+        // Tests point this at a throwaway folder
+        return config('youtube-converter.upload_path') ?: storage_path('app' . DIRECTORY_SEPARATOR . 'uploads');
     }
 
     /**
