@@ -2,7 +2,7 @@
 
 This document explains how AudioFetch works from end to end: the parts it is made of, how a request travels through them, and what every module and function does. Each flow comes with a diagram and a worked example.
 
-It describes the code at commit `da7f441` ("Upgrade to Laravel 13.38"), on 2026-10-24, together with the fixes of 2026-10-27 listed in section 17.
+It describes the code as of 2026-10-27: commit `4fb600c` ("Tidy song lists and move songs to a new folder") plus the dark-mode colours of section 12.7. That includes the fixes listed in section 17.
 
 **How to read the examples.** Commands, endpoints, field names, progress numbers and file-name rules are taken directly from the code. Values such as IDs, sizes and times are illustrative, chosen to show the rules at work.
 
@@ -486,7 +486,7 @@ Converting your own files.
 | `DashboardController` | `stats`: total downloads, storage used, jobs waiting, failed jobs, failed downloads, free disk space, and the 5 most recent downloads (only those after `recent_after`, see Home Clear). |
 | `PlaylistController` | `fetchInfo` (yt-dlp flat playlist), `store` (create or replace a playlist and its items, dispatch `ProcessPlaylistJob`), `index`, `show` (with items and downloads), `destroy`. |
 | `QueueController` | `status` (pending, processing, failed, `worker_running`), `jobs` and `failedJobs` (rows with the related download), `retryAllFailed`, `retryJob`, `clearFailed` (with `download_ids`, removes only those downloads' failed jobs; without, all of them), `cancelJob`. Reads the download ID from a job payload with a regular expression instead of `unserialize()`. |
-| `SettingsController` | `index`, `update`, `checkDiskSpace`, `testDependencies`, `testYoutube`, `ytDlpVersion`, `updateYtDlp`, `setupChecks` (first-run checklist). |
+| `SettingsController` | `index`, `update` (when the download folder changes, also returns `previous_download_path` and `songs_in_previous_folder`), `moveSongs` (moves the songs of an earlier folder into the current one with `SongMover`), `checkDiskSpace`, `testDependencies`, `testYoutube`, `ytDlpVersion`, `updateYtDlp`, `setupChecks` (first-run checklist). |
 | `LockController` | `status`, `unlock` (sets the cookie), `lock` (clears it). |
 
 ### 9.2 Jobs
@@ -638,6 +638,7 @@ Decodes the first audio stream to mono 16-bit PCM at 2000 Hz, splits it into 160
 | `UploadStore` | Chunked uploads in `storage/app/uploads/<uuid>/` with `source.<ext>` and `meta.json` (`name`, `size`, `file`, `used`). `create`, `append`, `exists`, `isComplete`, `meta`, `markUsed`, `path`, `delete`, `deleteFor`, `prune`. 8 MB pieces, 24-hour keep time. |
 | `AppLock` | Optional password: `enabled`, `allows`, `check` (plain text or bcrypt/argon hash), `unlockCookie`, `lockCookie`. |
 | `LocalFileAccess` | `allowed()`: the browser is on the same computer (`127.0.0.1` or `::1`) or the app has a password. |
+| `SongMover` | `songsIn(folder)`: finished songs whose file is directly in that folder. `move(from, to)`: moves them, picks `Song (1).mp3`, … when a name is taken, updates `file_path`, and keeps a file that cannot be moved where it is. `samePath()` compares folders ignoring slashes, and letter case on Windows. |
 | `FileExplorer` | `available()` (same computer and a desktop), `reveal()`: `explorer.exe /select,"…"` on Windows, `open -R` on macOS, `xdg-open` on Linux. |
 | `ProcessOutput` | `error()`: the last lines of a failed command's output as valid UTF-8, at most 1000 characters. |
 | `QueueWorkerHeartbeat` | `beat()` and `isAlive()`, see section 4. |
@@ -712,6 +713,7 @@ All endpoints are under `/api`. All except `/api/lock*` pass through `RequireApp
 | GET | `/dashboard/stats[?recent_after]` | Dashboard@stats |
 | GET | `/settings` | Settings@index |
 | PUT | `/settings` | Settings@update |
+| POST | `/settings/move-songs` | Settings@moveSongs |
 | GET | `/settings/disk-space` | Settings@checkDiskSpace |
 | GET | `/settings/test-dependencies` | Settings@testDependencies |
 | GET | `/settings/test-youtube` | Settings@testYoutube |
@@ -1012,7 +1014,7 @@ The recording is longer than 20 minutes, so only leading silence is removed. Rem
 ### 11.9 Edit tags of a finished song
 
 ```text
-History → ⋮ → Edit tags → TagEditorDialog
+History → ⋮ (or right-click the song) → Edit tags → TagEditorDialog
   stops the player first if this song is playing (Windows locks open files)
   PATCH /api/downloads/41 {title:"Silver Bullet - Nobody Else", artist:"Silver Bullet", rename:true}
      MetadataService::tagFile(clearEmpty: true)   empty fields remove the tag
@@ -1067,9 +1069,25 @@ History → Select → tick songs → "Download ZIP" opens `GET /api/downloads/z
 
 ### 11.13 History, Home and clearing
 
-- **History** lists completed downloads only. Filters are sent to the server: search, format, source (`youtube` / `files`) and sort. "Play all" loads up to 100 songs that match the current filters.
+- **History** lists completed downloads only, each on its own card. Filters are sent to the server: search, format, source (`youtube` / `files`) and sort. "Play all" loads up to 100 songs that match the current filters.
+- **Song actions.** Each card shows Play, Save and More (⋮). On wider screens More (or a right-click on the card) opens a menu beside the button; on phones it opens a bottom sheet, where Save is listed too. Both come from one list (`sheetActions`), shown below.
 - **Clear history** asks first, with a checkbox "Also delete the audio files from disk". Unticked sends `keep_files=true`: rows are removed and files are kept. Rows are deleted one by one, so the `deleted` hook also removes the cover images of converted files.
 - **Home → Clear** only hides the recent list. The newest song's `completed_at` is stored in `localStorage` `home-cleared-at` and sent as `recent_after`, so Home shows only songs finished after that moment. Nothing is deleted. "Show recent again" removes the stored value.
+
+The History song menu:
+
+```text
+Play  Save  More ─► ┌──────────────────────┐
+                    │ Edit tags            │
+                    │ Make ringtone        │
+                    │ Show in folder       │  only from the same computer
+                    ├──────────────────────┤
+                    │ Delete original file │  red; converted local files only
+                    │ Delete               │  red
+                    └──────────────────────┘
+```
+
+The menu opens upwards when there is no room below and stays inside the window. Esc, a click outside, scrolling or resizing close it; arrow keys move between items.
 
 ### 11.14 Cancel, retry and failure
 
@@ -1106,7 +1124,7 @@ Clicking a notification opens `/history` (or `/queue` for failures) without relo
 
 ### 11.16 Settings and the setup checklist
 
-- **Saving settings.** `PUT /api/settings` checks the download folder can be created and written to, and that a cookies file exists. Values are stored in the `settings` table; booleans as `'1'`/`'0'`, and empty values as `''` so they override `.env`.
+- **Saving settings.** `PUT /api/settings` checks the download folder can be created and written to, and that a cookies file exists. Values are stored in the `settings` table; booleans as `'1'`/`'0'`, and empty values as `''` so they override `.env`. A new download folder can come with an offer to move the existing songs (section 11.19).
 - **Setup checklist** (`GET /api/settings/setup-checks`) is shown on Home on first launch, and again whenever a new item fails. Tool versions are cached for 10 minutes because starting yt-dlp, FFmpeg and Deno takes seconds; "Recheck" passes `?fresh=1`.
 
 | Check | Required | Suggested fix (Windows) |
@@ -1143,6 +1161,36 @@ Changing `APP_PASSWORD` or `APP_KEY` changes the token, so every device is locke
 
 The scheduler runs `CleanupOldDownloadsJob` once a day. Example: a phone started uploading a 2 GB video yesterday and the tab was closed. Its folder in `storage/app/uploads` has had no new piece for 24 hours, so it is removed. An upload already queued for conversion is kept even when it is older.
 
+### 11.19 Change the download folder
+
+Every finished song stores its full path in `file_path`. Changing the folder in Settings changes where **new** songs go; songs already saved stay where they are until the user moves them.
+
+**Example:** 4 songs are in the default folder `D:\laragon\www\youtube_converter\storage\app\downloads`. The user picks `E:\Music` and saves.
+
+```text
+Settings.vue → PUT /api/settings {download_path:"E:\Music", …}
+   SettingsController@update
+     previous folder = Setting::downloadPath()   (before saving)
+     checks E:\Music can be created and written to, saves the settings
+     SongMover::songsIn(previous folder) → 4 finished songs still there
+   ← { message, previous_download_path:"…\storage\app\downloads", songs_in_previous_folder:4 }
+
+Dialog "Move your 4 songs too?"   [Leave them]  [Move]
+
+Leave them → nothing changes
+   "Show in folder" on an old song opens …\storage\app\downloads
+   a new download is saved in, and opens, E:\Music
+
+Move → POST /api/settings/move-songs {from:"…\storage\app\downloads"}
+   SongMover::move(from, E:\Music), for each song directly in that folder:
+     rename() into E:\Music; "LADY.mp3" taken there? → "LADY (1).mp3"
+     update file_path   (History, the player and "Show in folder" follow)
+     a file open in another program stays and is listed under "failed"
+   ← { moved:4, failed:[], message:"Moved 4 songs." }
+```
+
+Songs in subfolders (for example chapter-split folders) are left alone. A song still downloading when the folder changes finishes in the old folder. Moving to a folder on another drive copies the file, so a large library takes a moment.
+
 ---
 
 ## 12. Frontend architecture
@@ -1172,8 +1220,8 @@ app.js ── createApp(App) ── router (6 routes) ── mount #app ── r
 | `/download` | `SingleDownload.vue` | Tabs "Single link", "Multiple links", "Files" (`FileConvert.vue`); search results, preview, format, edits, tags, live progress. Query `?url=`, `?q=`, `?mode=files` |
 | `/playlist` | `PlaylistImport.vue` | Load a playlist, pick videos, import; list of imported playlists with Play and Remove |
 | `/queue` | `QueueStatus.vue` | Active and Failed tabs, cancel, retry, retry all, clear failed (`?tab=failed`) |
-| `/history` | `DownloadHistory.vue` | Search, filters, sort, pages; play, edit tags, ringtone, save, show in folder, delete original, delete; select and ZIP; clear |
-| `/settings` | `Settings.vue` | Storage, YouTube access, Titles & lyrics, Playlists, yt-dlp, Appearance, Notifications, Access, plus the setup checklist |
+| `/history` | `DownloadHistory.vue` | Search, filters, sort, pages; song cards with play, save and an actions menu (edit tags, ringtone, show in folder, delete original, delete); select and ZIP; clear |
+| `/settings` | `Settings.vue` | Storage (with the offer to move songs to a new folder), YouTube access, Titles & lyrics, Playlists, yt-dlp, Appearance, Notifications, Access, plus the setup checklist |
 
 ### 12.3 Shared modules
 
@@ -1224,6 +1272,21 @@ There are no WebSockets. Pages poll the API while something is running:
 | `setup-seen`, `setup-dismissed` | Setup checklist visibility |
 | `notifications` | Notifications wanted (`1`/`0`) |
 | `convert-folder` | Last folder used in "From this PC" |
+
+### 12.7 Look and themes
+
+All colours are CSS variables in `resources/css/app.css`. `:root` holds the light theme, `[data-theme='dark']` the dark one, and `[data-accent]` swaps in the accent colour picked under Settings → Appearance.
+
+| Variable | Light | Dark | Used for |
+| --- | --- | --- | --- |
+| `--md-bg` | `#e9edf5` | `#10131a` | Page background |
+| `--md-surface` | `#ffffff` | `#181b22` | Cards and panels |
+| `--md-glow` | accent at 9% | accent at 16% | Light falling from the top of the page |
+| `--md-glow-2` | none | accent at 7% | Faint light in the bottom-right corner |
+| `--md-song` | `--md-surface` | `--md-surface-2` (`#1f232b`) | Song cards |
+| `--md-song-hover` | `--md-surface-2` | `--md-surface-3` (`#2a2f39`) | Song card under the pointer |
+
+**Song cards.** `.song-list` (History and Home) lays the songs out as separate rounded cards with a small gap. In dark mode shadows barely show on dark panels, so the cards are one shade lighter than the panel instead. A selected card (History → Select) keeps its accent tint.
 
 ---
 
@@ -1301,7 +1364,7 @@ PHPUnit with three suites in `phpunit.xml`. Tests use SQLite in memory and a tem
 | Feature, jobs and services | `Jobs/DownloadYoutubeAudioJobTest`, `Jobs/ConvertLocalFileJobTest`, `YouTubeServiceTest`, `DiskSpaceServiceTest`, `WaveformTest`, `LyricsVolumeRingtoneTest` | Job steps, retries, cancelling, cleanup, waveforms, lyrics, loudness, ringtones |
 | Integration | `RealDownloadTest` | A real download with the real tools |
 
-Run them with `composer test` (or `php artisan test`) using PHP 8.3. At the last full run on 2026-10-27, all 248 tests passed.
+Run them with `composer test` (or `php artisan test`) using PHP 8.3. At the last full run on 2026-10-27, all 250 tests passed.
 
 ---
 

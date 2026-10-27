@@ -72,11 +72,17 @@
     --md-btn-shadow: 0 1px 1px rgb(22 30 50 / 0.12), 0 3px 8px -2px rgb(22 30 50 / 0.16);
     --md-primary-glow: 0 1px 1px rgb(15 42 110 / 0.3), 0 4px 12px -2px rgb(47 93 211 / 0.45);
     --md-shadow: var(--md-elev-1);
+
+    /* Light falling on the page background, and the song cards of History and Home */
+    --md-glow: color-mix(in srgb, var(--md-primary) 9%, transparent);
+    --md-glow-2: transparent;
+    --md-song: var(--md-surface);
+    --md-song-hover: var(--md-surface-2);
     color-scheme: light;
 }
 
 [data-theme='dark'] {
-    --md-bg: #0e1015;
+    --md-bg: #10131a;
     --md-surface: #181b22;
     --md-surface-2: #1f232b;
     --md-surface-3: #2a2f39;
@@ -101,6 +107,13 @@
     --md-inset: inset 0 1px 3px rgb(0 0 0 / 0.45);
     --md-btn-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
     --md-primary-glow: 0 1px 2px rgb(0 0 0 / 0.5), 0 4px 14px -4px rgb(174 198 255 / 0.35);
+
+    /* A near-black page looks flat, so the light is stronger and a second, faint one
+       sits in the corner. Shadows vanish on dark panels, so song cards are one shade lighter. */
+    --md-glow: color-mix(in srgb, var(--md-primary) 16%, transparent);
+    --md-glow-2: color-mix(in srgb, var(--md-primary) 7%, transparent);
+    --md-song: var(--md-surface-2);
+    --md-song-hover: var(--md-surface-3);
     color-scheme: dark;
 }
 
@@ -136,9 +149,11 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 
-/* A soft light falling on the page from the top (barely visible in dark mode) */
+/* A soft light falling on the page from the top (and, in dark mode, a faint one in the corner) */
 body {
-    background-image: radial-gradient(1200px 500px at 50% -200px, color-mix(in srgb, var(--md-primary) 9%, transparent), transparent 70%);
+    background-image:
+        radial-gradient(1200px 500px at 50% -200px, var(--md-glow), transparent 70%),
+        radial-gradient(900px 600px at 100% 100%, var(--md-glow-2), transparent 70%);
     background-attachment: fixed;
 }
 
@@ -161,7 +176,7 @@ body {
     }
 
     .song-list > * {
-        background: var(--md-surface);
+        background: var(--md-song);
         border: 1px solid var(--md-line);
         border-radius: 14px;
         box-shadow: var(--md-elev-1);
@@ -169,7 +184,7 @@ body {
     }
 
     .song-list > *:hover {
-        background: var(--md-surface-2);
+        background: var(--md-song-hover);
         border-color: var(--md-line-strong);
     }
 
