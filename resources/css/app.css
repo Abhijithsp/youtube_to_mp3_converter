@@ -152,6 +152,27 @@ body {
         box-shadow: var(--md-elev-1);
     }
 
+    /* Song lists (History, Home): every song on its own small card */
+    .song-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 0.625rem;
+    }
+
+    .song-list > * {
+        background: var(--md-surface);
+        border: 1px solid var(--md-line);
+        border-radius: 14px;
+        box-shadow: var(--md-elev-1);
+        transition: background-color 120ms, border-color 120ms;
+    }
+
+    .song-list > *:hover {
+        background: var(--md-surface-2);
+        border-color: var(--md-line-strong);
+    }
+
     /* Clickable cards lift towards the light */
     .card-lift {
         transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;

@@ -315,7 +315,7 @@ import PageHeader from '../components/PageHeader.vue';
 import SegmentedControl from '../components/SegmentedControl.vue';
 import SetupChecklist from '../components/SetupChecklist.vue';
 import { lockAPI, settingsAPI } from '../services/api';
-import { ACCENTS, errorMessage, notify, setAccent, toggleTheme, ui } from '../ui';
+import { ACCENTS, confirmDialog, errorMessage, notify, setAccent, toggleTheme, ui } from '../ui';
 import {
   disableNotifications,
   enableNotifications,
@@ -436,11 +436,12 @@ export default {
       this.saving = true;
       this.errors = {};
       try {
-        await settingsAPI.update(this.form);
+        const { data } = await settingsAPI.update(this.form);
         this.saved = JSON.stringify(this.form);
         this.youtubeCheck = null;
         notify('Settings saved.', 'success');
         settingsAPI.checkDiskSpace().then(({ data }) => (this.disk = data)).catch(() => {});
+        if (data.songs_in_previous_folder) this.offerMove(data.previous_download_path, data.songs_in_previous_folder);
       } catch (error) {
         const errors = error.response?.data?.errors;
         if (errors) {
@@ -449,6 +450,25 @@ export default {
         notify(errorMessage(error, 'Could not save settings'), 'error');
       } finally {
         this.saving = false;
+      }
+    },
+
+    /** Songs saved before the folder changed stay in the old one unless the user moves them */
+    async offerMove(from, count) {
+      const songs = `${count} song${count === 1 ? '' : 's'}`;
+      const ok = await confirmDialog({
+        title: `Move your ${songs} too?`,
+        message: `New downloads go to the new folder. Your ${songs} in\n${from}\ncan move there as well, or stay where they are.`,
+        confirmLabel: 'Move',
+        cancelLabel: 'Leave them',
+      });
+      if (!ok) return;
+      try {
+        const { data } = await settingsAPI.moveSongs(from);
+        notify(data.message, data.failed.length ? 'error' : 'success');
+        settingsAPI.checkDiskSpace().then(({ data }) => (this.disk = data)).catch(() => {});
+      } catch (error) {
+        notify(errorMessage(error, 'Could not move the songs'), 'error');
       }
     },
 

@@ -92,6 +92,7 @@ Route::middleware(RequireAppPassword::class)->group(function () {
     Route::prefix('settings')->group(function () {
         Route::get('/', [App\Http\Controllers\SettingsController::class, 'index']);
         Route::put('/', [App\Http\Controllers\SettingsController::class, 'update']);
+        Route::post('/move-songs', [App\Http\Controllers\SettingsController::class, 'moveSongs']);
         Route::get('/disk-space', [App\Http\Controllers\SettingsController::class, 'checkDiskSpace']);
         Route::get('/test-dependencies', [App\Http\Controllers\SettingsController::class, 'testDependencies']);
         Route::get('/test-youtube', [App\Http\Controllers\SettingsController::class, 'testYoutube']);

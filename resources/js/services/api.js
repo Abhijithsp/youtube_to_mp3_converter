@@ -256,6 +256,10 @@ export const settingsAPI = {
   update(data) {
     return api.put('/settings', data);
   },
+
+  moveSongs(from) {
+    return api.post('/settings/move-songs', { from });
+  },
   
   checkDiskSpace() {
     return api.get('/settings/disk-space');

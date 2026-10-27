@@ -54,6 +54,53 @@ class SettingsAndDashboardApiTest extends TestCase
         $this->assertSame('4', Setting::get('rate_limit_seconds'));
     }
 
+    public function test_changing_the_folder_reports_the_songs_left_in_the_old_one(): void
+    {
+        Download::factory()->completed($this->makeAudioFile('LADY.mp3'))->create();
+        Download::factory()->completed($this->downloadDir . '/gone.mp3')->create();
+
+        $this->putJson('/api/settings', $this->validSettings())
+            ->assertOk()
+            ->assertJsonPath('previous_download_path', $this->downloadDir)
+            ->assertJsonPath('songs_in_previous_folder', 1);
+
+        // Saving again without changing the folder offers nothing
+        $this->putJson('/api/settings', $this->validSettings())
+            ->assertJsonPath('previous_download_path', null)
+            ->assertJsonPath('songs_in_previous_folder', 0);
+    }
+
+    public function test_songs_can_be_moved_to_the_new_folder(): void
+    {
+        $old = $this->makeAudioFile('LADY.mp3', 'old-song');
+        $song = Download::factory()->completed($old)->create();
+        mkdir($this->downloadDir . '/sub');
+        $elsewhere = Download::factory()->completed($this->makeAudioFile('sub/keep.mp3'))->create();
+        $this->putJson('/api/settings', $this->validSettings())->assertOk();
+
+        // A song of the same name already in the new folder is not overwritten
+        file_put_contents($this->downloadDir . '/music/LADY.mp3', 'other-song');
+
+        $this->postJson('/api/settings/move-songs', ['from' => $this->downloadDir])
+            ->assertOk()
+            ->assertJsonPath('moved', 1)
+            ->assertJsonPath('failed', [])
+            ->assertJsonPath('message', 'Moved 1 song.');
+
+        $moved = $this->downloadDir . '/music' . DIRECTORY_SEPARATOR . 'LADY (1).mp3';
+        $this->assertSame($moved, $song->fresh()->file_path);
+        $this->assertSame('old-song', file_get_contents($moved));
+        $this->assertSame('other-song', file_get_contents($this->downloadDir . '/music/LADY.mp3'));
+        $this->assertFileDoesNotExist($old);
+
+        // Only songs directly in the old folder move
+        $this->assertSame($this->downloadDir . '/sub/keep.mp3', $elsewhere->fresh()->file_path);
+
+        $this->postJson('/api/settings/move-songs', ['from' => $this->downloadDir . '/music'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('from');
+    }
+
     public function test_relative_download_paths_are_anchored_to_the_project_root(): void
     {
         $this->putJson('/api/settings', $this->validSettings(['download_path' => 'storage/framework/testing/relative-dl']))->assertOk();

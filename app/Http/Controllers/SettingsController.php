@@ -7,6 +7,7 @@ use App\Services\YouTubeService;
 use App\Services\AudioConverterService;
 use App\Services\DiskSpaceService;
 use App\Support\QueueWorkerHeartbeat;
+use App\Support\SongMover;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\Rule;
@@ -58,7 +59,7 @@ class SettingsController extends Controller
         ]);
     }
 
-    public function update(Request $request)
+    public function update(Request $request, SongMover $songMover)
     {
         $data = $request->validate([
             'download_path' => 'required|string',
@@ -71,6 +72,7 @@ class SettingsController extends Controller
             'fetch_lyrics' => 'sometimes|boolean',
         ]);
 
+        $previousPath = Setting::downloadPath();
         $path = Setting::absolutePath(rtrim($data['download_path'], '/\\'));
 
         // The download job writes here, so reject paths it cannot create or write to
@@ -99,7 +101,42 @@ class SettingsController extends Controller
             Setting::set($key, is_bool($value) ? ($value ? '1' : '0') : ($value ?? ''));
         }
 
-        return response()->json(['message' => 'Settings updated successfully']);
+        // Songs stay where they were saved; tell the page so it can offer to move them
+        $songsLeft = SongMover::samePath($previousPath, $path) ? 0 : $songMover->songsIn($previousPath)->count();
+
+        return response()->json([
+            'message' => 'Settings updated successfully',
+            'previous_download_path' => $songsLeft ? $previousPath : null,
+            'songs_in_previous_folder' => $songsLeft,
+        ]);
+    }
+
+    /**
+     * Move the finished songs of an earlier download folder into the current one
+     */
+    public function moveSongs(Request $request, SongMover $songMover)
+    {
+        $data = $request->validate(['from' => 'required|string']);
+
+        $from = Setting::absolutePath(rtrim($data['from'], '/\\'));
+        $to = Setting::downloadPath();
+
+        if (SongMover::samePath($from, $to)) {
+            throw ValidationException::withMessages(['from' => 'The songs are already in the download folder.']);
+        }
+
+        if (!is_dir($to) || !is_writable($to)) {
+            throw ValidationException::withMessages(['from' => 'The download folder is not writable.']);
+        }
+
+        $result = $songMover->move($from, $to);
+
+        $message = "Moved {$result['moved']} song" . ($result['moved'] === 1 ? '' : 's') . '.';
+        if ($result['failed']) {
+            $message .= ' ' . count($result['failed']) . ' could not be moved (open in another program?) and stayed in the old folder.';
+        }
+
+        return response()->json($result + ['message' => $message]);
     }
 
     /**

@@ -62,7 +62,7 @@
         </div>
       </div>
 
-      <div v-if="loading" class="divide-y divide-line">
+      <div v-if="loading" class="song-list">
         <div v-for="n in 3" :key="n" class="flex items-center gap-3 px-4 py-3">
           <div class="h-11 w-[4.5rem] animate-pulse rounded-lg bg-surface-3" />
           <div class="flex-1 space-y-2">
@@ -87,7 +87,7 @@
         text="Finished downloads show up here."
       />
 
-      <div v-else class="divide-y divide-line">
+      <div v-else class="song-list">
         <DownloadRow v-for="download in recent" :key="download.id" :download="download" :show-status="false">
           <template #actions>
             <button
