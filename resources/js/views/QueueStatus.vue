@@ -212,9 +212,10 @@ export default {
         danger: true,
       });
       if (!ok) return;
-      await Promise.allSettled(this.failed.map((d) => downloadAPI.delete(d.id)));
-      // Also drop the matching records in the failed_jobs table
-      await queueAPI.clearFailed().catch(() => {});
+      const ids = this.failed.map((d) => d.id);
+      await Promise.allSettled(ids.map((id) => downloadAPI.delete(id)));
+      // Also drop the failed_jobs records of these downloads, and only those
+      await queueAPI.clearFailed(ids).catch(() => {});
       this.refresh();
     },
   },

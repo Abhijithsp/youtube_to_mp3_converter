@@ -66,18 +66,14 @@ class HistoryController extends Controller
         // boolean() parses query-string values such as "false" / "0"
         $keepFiles = $request->boolean('keep_files', true);
         
-        // If not keeping files, we need to iterate and delete
-        if (!$keepFiles) {
-            Download::completed()->chunk(100, function ($downloads) {
-                foreach ($downloads as $download) {
-                    if ($download->file_path && file_exists($download->file_path)) {
-                        @unlink($download->file_path);
-                    }
-                }
-            });
-        }
-        
-        Download::completed()->delete();
+        // Delete one by one so the model's deleted hook also removes cover images
+        Download::completed()->lazyById(100)->each(function (Download $download) use ($keepFiles) {
+            if (!$keepFiles && $download->file_path && file_exists($download->file_path)) {
+                @unlink($download->file_path);
+            }
+
+            $download->delete();
+        });
         
         return response()->json(['message' => 'History cleared']);
     }

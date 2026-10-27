@@ -47,12 +47,22 @@ class ProcessPlaylistJob implements ShouldQueue
 
             $delaySeconds = (int) \App\Models\Setting::get('rate_limit_seconds', config('youtube-converter.rate_limit_seconds', 2));
 
-            foreach ($items as $index => $item) {
+            $queued = 0;
+
+            foreach ($items as $item) {
+                $videoId = $youtubeService->extractVideoId($item->youtube_url) ?? '';
+
+                // A song already downloaded in this format/quality is reused, like single and bulk downloads
+                if ($videoId !== '' && ($existing = Download::findExisting($videoId, $this->format, (string) $this->quality))) {
+                    $item->update(['download_id' => $existing->id]);
+                    continue;
+                }
+
                 // Create download record. youtube_id and title are required columns; the download job
                 // replaces the placeholder title with the real one from yt-dlp
                 $download = Download::create([
                     'youtube_url' => $item->youtube_url,
-                    'youtube_id' => $youtubeService->extractVideoId($item->youtube_url) ?? '',
+                    'youtube_id' => $videoId,
                     'title' => Download::PLACEHOLDER_TITLE,
                     'format' => $this->format,
                     'quality' => (string) $this->quality,
@@ -64,9 +74,12 @@ class ProcessPlaylistJob implements ShouldQueue
 
                 // Dispatch download job with delay
                 DownloadYoutubeAudioJob::dispatch($download)
-                    ->delay(now()->addSeconds($index * $delaySeconds));
+                    ->delay(now()->addSeconds($queued++ * $delaySeconds));
             }
-            
+
+            // Count the reused songs now; when every song was reused, no download job will
+            $this->playlist->syncProgress();
+
         } catch (Exception $e) {
             Log::error('Playlist processing failed', [
                 'playlist_id' => $this->playlist->id,

@@ -196,28 +196,24 @@ class Download extends Model
     }
 
     // Helper methods
-    public function markAsProcessing()
+    /**
+     * An earlier, untrimmed download of the same video in the same format/quality
+     * whose file still exists
+     */
+    public static function findExisting(string $videoId, string $format, string $quality): ?self
     {
-        $this->update(['status' => 'processing', 'progress' => 0]);
-    }
-
-    public function markAsCompleted($filePath, $fileSize)
-    {
-        $this->update([
-            'status' => 'completed',
-            'file_path' => $filePath,
-            'file_size' => $fileSize,
-            'progress' => 100,
-            'completed_at' => now(),
-        ]);
-    }
-
-    public function markAsFailed($errorMessage)
-    {
-        $this->update([
-            'status' => 'failed',
-            'error_message' => $errorMessage,
-        ]);
+        return static::where('youtube_id', $videoId)
+            ->where('status', 'completed')
+            ->where('format', $format)
+            ->where('quality', $quality)
+            ->whereNull('trim_start')
+            ->whereNull('trim_end')
+            ->where('remove_silence', false)
+            ->where('normalize_volume', false)
+            ->whereNull('chapter_index')
+            ->latest()
+            ->get()
+            ->first(fn (Download $download) => $download->file_path && file_exists($download->file_path));
     }
 
     public function updateProgress($progress)

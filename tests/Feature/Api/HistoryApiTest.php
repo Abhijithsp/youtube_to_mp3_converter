@@ -4,6 +4,8 @@ namespace Tests\Feature\Api;
 
 use App\Models\Download;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Str;
 use Tests\Concerns\UsesTemporaryDownloadDirectory;
 use Tests\TestCase;
 
@@ -77,5 +79,23 @@ class HistoryApiTest extends TestCase
 
         $this->assertDatabaseCount('downloads', 0);
         $this->assertFileDoesNotExist($path);
+    }
+
+    public function test_clearing_history_removes_cover_images_of_converted_files(): void
+    {
+        // A throwaway storage folder, so the app's real covers are never touched
+        $storage = storage_path('framework/testing/storage-' . Str::random(8));
+        $this->app->useStoragePath($storage);
+        $this->beforeApplicationDestroyed(fn () => File::deleteDirectory($storage));
+
+        $download = Download::factory()->completed($this->makeAudioFile())->create(['source' => Download::SOURCE_LOCAL]);
+        File::ensureDirectoryExists(dirname($download->coverPath()));
+        file_put_contents($download->coverPath(), 'jpeg-bytes');
+
+        // Used to stay behind: the query delete skipped the model's deleted hook
+        $this->deleteJson('/api/history')->assertOk();
+
+        $this->assertDatabaseCount('downloads', 0);
+        $this->assertFileDoesNotExist($download->coverPath());
     }
 }

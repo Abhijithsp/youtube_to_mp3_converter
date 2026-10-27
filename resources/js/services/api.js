@@ -185,8 +185,8 @@ export const queueAPI = {
     },
 
     // Clear all failed jobs
-    clearFailed() {
-        return api.post("/queue/clear-failed");
+    clearFailed(downloadIds) {
+        return api.post("/queue/clear-failed", downloadIds ? { download_ids: downloadIds } : {});
     },
 
     // Retry all failed jobs

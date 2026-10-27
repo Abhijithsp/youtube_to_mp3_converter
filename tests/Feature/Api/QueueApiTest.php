@@ -120,6 +120,25 @@ class QueueApiTest extends TestCase
         $this->assertDatabaseCount('failed_jobs', 0);
     }
 
+    public function test_clear_failed_with_download_ids_removes_only_those_jobs(): void
+    {
+        $shown = Download::factory()->failed()->create();
+        $other = Download::factory()->failed()->create();
+
+        DownloadYoutubeAudioJob::dispatch($shown);
+        $this->failJob(DB::table('jobs')->value('id'));
+        DownloadYoutubeAudioJob::dispatch($other);
+        $otherUuid = $this->failJob(DB::table('jobs')->value('id'));
+
+        $this->postJson('/api/queue/clear-failed', ['download_ids' => [$shown->id]])
+            ->assertOk()
+            ->assertJsonPath('cleared', 1);
+
+        $this->assertSame([$otherUuid], DB::table('failed_jobs')->pluck('uuid')->all());
+
+        $this->postJson('/api/queue/clear-failed', ['download_ids' => 'x'])->assertUnprocessable();
+    }
+
     public function test_a_queued_job_can_be_cancelled(): void
     {
         DownloadYoutubeAudioJob::dispatch(Download::factory()->create());

@@ -136,6 +136,46 @@ class PlaylistApiTest extends TestCase
         Queue::assertPushed(DownloadYoutubeAudioJob::class, 2);
     }
 
+    public function test_processing_job_reuses_songs_already_downloaded(): void
+    {
+        Queue::fake();
+        $path = storage_path('framework/testing/playlist-' . uniqid() . '.mp3');
+        file_put_contents($path, 'fake-audio-bytes');
+        $this->beforeApplicationDestroyed(fn () => @unlink($path));
+
+        $existing = Download::factory()->completed($path)->create(['youtube_id' => 'TpHlTBRLHgs', 'format' => 'mp3', 'quality' => '320']);
+
+        $playlist = Playlist::factory()->create(['total_videos' => 2]);
+        $reused = PlaylistItem::factory()->for($playlist)->create(['youtube_url' => 'https://www.youtube.com/watch?v=TpHlTBRLHgs', 'position' => 1]);
+        PlaylistItem::factory()->for($playlist)->create(['youtube_url' => 'https://www.youtube.com/watch?v=MnH03XLqeRs', 'position' => 2]);
+
+        // Used to download the song again, saved as "Title (1).mp3"
+        (new ProcessPlaylistJob($playlist, 'mp3', 320))->handle(new YouTubeService());
+
+        $this->assertSame($existing->id, $reused->fresh()->download_id);
+        $this->assertDatabaseCount('downloads', 2);
+        $this->assertSame(1, $playlist->fresh()->processed_videos);
+        Queue::assertPushed(DownloadYoutubeAudioJob::class, 1);
+        Queue::assertPushed(DownloadYoutubeAudioJob::class, fn ($job) => $job->download->youtube_id === 'MnH03XLqeRs');
+    }
+
+    public function test_playlist_completes_when_every_song_was_already_downloaded(): void
+    {
+        Queue::fake();
+        $path = storage_path('framework/testing/playlist-' . uniqid() . '.mp3');
+        file_put_contents($path, 'fake-audio-bytes');
+        $this->beforeApplicationDestroyed(fn () => @unlink($path));
+
+        Download::factory()->completed($path)->create(['youtube_id' => 'TpHlTBRLHgs', 'format' => 'mp3', 'quality' => '320']);
+        $playlist = Playlist::factory()->create(['total_videos' => 1]);
+        PlaylistItem::factory()->for($playlist)->create(['youtube_url' => 'https://www.youtube.com/watch?v=TpHlTBRLHgs', 'position' => 1]);
+
+        (new ProcessPlaylistJob($playlist, 'mp3', 320))->handle(new YouTubeService());
+
+        $this->assertSame('completed', $playlist->fresh()->status);
+        Queue::assertNotPushed(DownloadYoutubeAudioJob::class);
+    }
+
     public function test_index_show_and_destroy(): void
     {
         $playlist = Playlist::factory()->create(['title' => 'Hardstyle']);

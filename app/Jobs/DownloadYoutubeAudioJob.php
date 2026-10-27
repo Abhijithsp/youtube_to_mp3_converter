@@ -339,7 +339,7 @@ class DownloadYoutubeAudioJob implements ShouldQueue
 
             if ($chapters) {
                 // Step 8: One file per chapter; this download becomes track 1
-                $this->download->update(['progress' => 96, 'status_text' => 'Splitting into' . count($chapters) . ' tracks...']);
+                $this->download->update(['progress' => 96, 'status_text' => 'Splitting into ' . count($chapters) . ' tracks...']);
                 $chapterSplitService->split($this->download, $finalFile, $chapters, $downloadPath);
                 $finalFile = $this->download->file_path;
                 $fileFields = [];

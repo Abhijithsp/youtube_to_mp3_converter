@@ -240,29 +240,4 @@ class AudioConverterService
 
         return $matches[1] ?? null;
     }
-
-    /**
-     * Extract audio from video file
-     */
-    public function extractAudio(string $videoPath, string $audioPath): bool
-    {
-        try {
-            $result = Process::timeout(600)->run([
-                'ffmpeg', '-y', '-i', $videoPath, '-vn', '-acodec', 'copy', $audioPath,
-            ]);
-
-            if (!$result->successful()) {
-                throw new Exception('Audio extraction failed: ' . ProcessOutput::error($result));
-            }
-
-            return file_exists($audioPath);
-        } catch (Exception $e) {
-            Log::error('Audio extraction failed', [
-                'video' => $videoPath,
-                'audio' => $audioPath,
-                'error' => $e->getMessage(),
-            ]);
-            throw $e;
-        }
-    }
 }

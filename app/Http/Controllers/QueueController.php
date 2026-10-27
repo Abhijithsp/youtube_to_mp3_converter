@@ -88,10 +88,31 @@ class QueueController extends Controller
         return response()->json(['message' => 'Job retried']);
     }
 
-    public function clearFailed()
+    /**
+     * Remove failed jobs. With download_ids, only the jobs of those downloads go
+     * (the ones the Queue page showed); without, every failed job is removed.
+     */
+    public function clearFailed(Request $request)
     {
-        Artisan::call('queue:flush');
-        return response()->json(['message' => 'Failed jobs cleared']);
+        $data = $request->validate([
+            'download_ids' => 'sometimes|array',
+            'download_ids.*' => 'integer',
+        ]);
+
+        if (!$request->has('download_ids')) {
+            Artisan::call('queue:flush');
+            return response()->json(['message' => 'Failed jobs cleared']);
+        }
+
+        $downloadIds = array_map('intval', $data['download_ids']);
+
+        $ids = DB::table('failed_jobs')->get(['id', 'payload'])
+            ->filter(fn ($job) => in_array($this->downloadIdFromPayload($job->payload), $downloadIds, true))
+            ->pluck('id');
+
+        DB::table('failed_jobs')->whereIn('id', $ids)->delete();
+
+        return response()->json(['message' => 'Failed jobs cleared', 'cleared' => $ids->count()]);
     }
 
     public function cancelJob($id)

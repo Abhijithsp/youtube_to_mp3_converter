@@ -88,20 +88,6 @@ class MetadataService
     }
 
     /**
-     * Extract metadata from YouTube video info
-     */
-    public function extractMetadataFromYouTube(array $videoInfo): array
-    {
-        return [
-            'title' => $videoInfo['title'] ?? 'Unknown Title',
-            'artist' => $videoInfo['artist'] ?? $videoInfo['uploader'] ?? 'Unknown Artist',
-            'album' => $videoInfo['album'] ?? null,
-            'year' => isset($videoInfo['upload_date']) ? substr($videoInfo['upload_date'], 0, 4) : null,
-            'genre' => $videoInfo['genre'] ?? 'Music',
-        ];
-    }
-
-    /**
      * Attach a thumbnail to the audio file as embedded cover art
      */
     public function attachThumbnail(string $audioPath, string $thumbnailPath): bool

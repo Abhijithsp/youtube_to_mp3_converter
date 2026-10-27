@@ -141,7 +141,7 @@ class DownloadController extends Controller
                 || $request->boolean('normalize_volume') || $request->boolean('split_chapters');
 
             // Edited (trimmed) downloads are always made fresh
-            $existing = $edited ? null : $this->findExisting($videoId, $request->format, (string) $request->quality);
+            $existing = $edited ? null : Download::findExisting($videoId, $request->format, (string) $request->quality);
 
             if ($existing) {
                 return response()->json([
@@ -230,7 +230,7 @@ class DownloadController extends Controller
             }
             $seen[$videoId] = true;
 
-            if ($existing = $this->findExisting($videoId, $data['format'], (string) $data['quality'])) {
+            if ($existing = Download::findExisting($videoId, $data['format'], (string) $data['quality'])) {
                 $skipped[] = ['url' => $url, 'reason' => 'Already downloaded', 'download' => $existing];
                 continue;
             }
@@ -387,26 +387,6 @@ class DownloadController extends Controller
         }
 
         return $target;
-    }
-
-    /**
-     * An earlier, untrimmed download of the same video in the same format/quality
-     * whose file still exists
-     */
-    private function findExisting(string $videoId, string $format, string $quality): ?Download
-    {
-        return Download::where('youtube_id', $videoId)
-            ->where('status', 'completed')
-            ->where('format', $format)
-            ->where('quality', $quality)
-            ->whereNull('trim_start')
-            ->whereNull('trim_end')
-            ->where('remove_silence', false)
-            ->where('normalize_volume', false)
-            ->whereNull('chapter_index')
-            ->latest()
-            ->get()
-            ->first(fn (Download $download) => $download->file_path && file_exists($download->file_path));
     }
 
     /**

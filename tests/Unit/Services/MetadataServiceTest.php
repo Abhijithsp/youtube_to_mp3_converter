@@ -148,19 +148,4 @@ class MetadataServiceTest extends TestCase
 
         $this->assertFalse($this->service->downloadThumbnail('https://i.ytimg.com/vi/missing/maxresdefault.jpg', $this->dir . '/other'));
     }
-
-    public function test_metadata_is_extracted_from_youtube_info(): void
-    {
-        $this->assertSame([
-            'title' => 'LADY',
-            'artist' => 'Q-dance Music',
-            'album' => null,
-            'year' => '2019',
-            'genre' => 'Music',
-        ], $this->service->extractMetadataFromYouTube([
-            'title' => 'LADY',
-            'uploader' => 'Q-dance Music',
-            'upload_date' => '20190412',
-        ]));
-    }
 }
