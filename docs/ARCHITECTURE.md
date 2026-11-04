@@ -2,7 +2,7 @@
 
 This document explains how AudioFetch works from end to end: the parts it is made of, how a request travels through them, and what every module and function does. Each flow comes with a diagram and a worked example.
 
-It describes the code as of 2026-10-27: commit `4fb600c` ("Tidy song lists and move songs to a new folder") plus the dark-mode colours of section 12.7. That includes the fixes listed in section 17.
+It describes the code as of 2026-11-04, at commit `139d514` ("Run several downloads at once"). That includes the fixes listed in section 17.
 
 **How to read the examples.** Commands, endpoints, field names, progress numbers and file-name rules are taken directly from the code. Values such as IDs, sizes and times are illustrative, chosen to show the rules at work.
 
@@ -96,7 +96,7 @@ The heavy work never happens inside a web request. The browser asks for a downlo
                                            │ polls the jobs table
                                            ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ Queue worker  (php artisan queue:work / queue:listen)                      │
+│ Queue workers  (php artisan downloads:work, 1-8 at a time)                 │
 │                                                                            │
 │  DownloadYoutubeAudioJob · ConvertLocalFileJob · ProcessPlaylistJob        │
 │  CleanupOldDownloadsJob (daily, from the scheduler)                        │
@@ -155,15 +155,15 @@ AudioFetch needs up to four processes running at the same time:
 | Process | Command | Role |
 | --- | --- | --- |
 | Web server | `php artisan serve`, Apache (Laragon) or `php artisan serve` in Docker | Serves the SPA and the API |
-| Queue worker | `php artisan queue:work` or `queue:listen` | Runs jobs: downloads, conversions, playlists |
+| Queue workers | `php artisan downloads:work` | Keeps as many `queue:work` processes running as Settings asks for. They run the jobs: downloads, conversions, playlists |
 | Scheduler | `php artisan schedule:work` (or cron `schedule:run`) | Runs `CleanupOldDownloadsJob` daily |
 | Vite (development only) | `npm run dev` | Hot-reloads the frontend |
 
 How they are started:
 
-- **`composer run dev`** starts the server, `queue:listen --tries=1`, `pail` (logs) and Vite together through `npx concurrently`.
-- **`php artisan dev`** (Laravel 13.25+) does the same. On Windows it also uses `concurrently`.
-- **Docker** (`docker/entrypoint.sh`) runs migrations, seeds settings once, then loops `queue:work --sleep=2 --tries=3` and `schedule:work` in the background and runs `php artisan serve` in the foreground.
+- **`composer run dev`** starts the server, `downloads:work`, `pail` (logs) and Vite together through `npx concurrently`.
+- **`php artisan dev`** (Laravel 13.25+) does the same. On Windows it also uses `concurrently`. `AppServiceProvider` registers `downloads:work` under the name `queue`, which replaces Laravel's default `queue:listen`.
+- **Docker** (`docker/entrypoint.sh`) runs migrations, seeds settings once, then loops `downloads:work` and `schedule:work` in the background and runs `php artisan serve` in the foreground.
 
 **How the app knows the worker is running.** Every time a worker polls the queue, Laravel fires `JobPopping`. `AppServiceProvider` listens for it and calls `QueueWorkerHeartbeat::beat()`, which stores a timestamp in the cache. `isAlive()` is true when the last beat is at most 30 seconds old. It is also true when a download is `processing` and was updated in the last 120 seconds, because a worker busy with a long job does not poll. The UI shows `WorkerBanner` when the worker is down and jobs are waiting.
 
@@ -500,7 +500,7 @@ Converting your own files.
 1. Stop if cancelled. Mark as `processing`.
 2. **Video info.** Run `extractVideoInfo` only when needed (placeholder title, or missing ID, duration or thumbnail) or when splitting by chapters. Titles the user set are kept. Empty tags are filled from yt-dlp and `TrackTitle::suggest`.
 3. **Disk space.** Estimate the size (bitrate × duration; FLAC counted as 1000 kbps and WAV as 2304 kbps) and require `min_disk_space_mb` plus that estimate.
-4. **Paths.** `<download folder>/<FileName::fromTitle(title)>.<format>`. If it exists: `Title (1).mp3`, `Title (2).mp3`, … The temp file is `storage/app/temp/download_<id>_<time>`.
+4. **Paths.** `<download folder>/<FileName::fromTitle(title)>.<format>`, claimed at once with `FileName::reserve`. If it exists: `Title (1).mp3`, `Title (2).mp3`, … The temp file is `storage/app/temp/download_<id>_<time>`.
 5. **Download** with `YouTubeService::downloadAudio`, reporting progress.
 6. **Convert** with `AudioConverterService::convert` when the extension differs from the target or edits are wanted. Otherwise the file is just moved. After edits, the real duration is read with ffprobe.
 7. **Tags** with `MetadataService::tagFile`, then the **thumbnail** is downloaded and embedded (not for WAV). Tag failures are logged and do not fail the download.
@@ -520,7 +520,7 @@ Errors:
 
 1. `LocalFileService::inspect` the source. A missing upload says "The uploaded file is gone (uploads are kept for a day)".
 2. Disk space check.
-3. Output path in the download folder, never overwriting anything, including the original itself.
+3. Output path in the download folder, claimed with `FileName::reserve`, never overwriting anything, including the original itself.
 4. Convert, with `timeout` passed to ffmpeg.
 5. Tags. Cover from the file's own art or a video frame, saved to `storage/app/covers/<id>.jpg` and embedded (not for WAV).
 6. Lyrics.
@@ -578,7 +578,7 @@ Format settings:
 | Format | ffmpeg arguments |
 | --- | --- |
 | MP3 | `-ar 44100 -c:a libmp3lame -b:a 192k`, `256k` or `320k` |
-| FLAC | `-ar 44100 -c:a flac -compression_level 8` |
+| FLAC | `-ar 48000 -c:a flac -compression_level 8` (48 kHz is the rate of YouTube and most videos, so nothing is downsampled) |
 | WAV | `-ar 48000 -c:a pcm_s24le` (24-bit, 48 kHz) |
 
 Edit filters (joined into one `-af`):
@@ -634,7 +634,7 @@ Decodes the first audio stream to mono 16-bit PCM at 2000 Hz, splits it into 160
 | Class | What it does |
 | --- | --- |
 | `TrackTitle` | `clean()` removes noise such as "(Official Music Video)", "[HD]", "\| Lyrics", "#shorts" but keeps "(Extended Mix)", "(feat. X)", "(Live)". `split()` turns "Artist - Song" into its two parts. `suggest()` builds the title and artist for a video. `songTitle()` drops the artist from the tag title. |
-| `FileName` | `fromTitle()` keeps the title as the file name, replacing characters Windows forbids with spaces, removing trailing dots and spaces, cutting at 180 bytes, and refusing reserved names (`CON`, `NUL`, `COM1`…). |
+| `FileName` | `fromTitle()` keeps the title as the file name, replacing characters Windows forbids with spaces, removing trailing dots and spaces, cutting at 180 bytes, and refusing reserved names (`CON`, `NUL`, `COM1`…). `reserve()` claims `Name.mp3`, or `Name (1).mp3`, … by creating an empty file there, so two jobs running together never pick the same name. The job's clean-up removes that file when the job fails or is cancelled. |
 | `UploadStore` | Chunked uploads in `storage/app/uploads/<uuid>/` with `source.<ext>` and `meta.json` (`name`, `size`, `file`, `used`). `create`, `append`, `exists`, `isComplete`, `meta`, `markUsed`, `path`, `delete`, `deleteFor`, `prune`. 8 MB pieces, 24-hour keep time. |
 | `AppLock` | Optional password: `enabled`, `allows`, `check` (plain text or bcrypt/argon hash), `unlockCookie`, `lockCookie`. |
 | `LocalFileAccess` | `allowed()`: the browser is on the same computer (`127.0.0.1` or `::1`) or the app has a password. |
@@ -650,13 +650,14 @@ Decodes the first audio stream to mono 16-bit PCM at 2000 Hz, splits it into 160
 | `Download` | Constants `PLACEHOLDER_TITLE`, `FINAL_STATUSES`, `FORMATS`, `LOSSLESS_FORMATS`, `SOURCE_*`. Attributes `download_url`, `original_available`. `job()` returns the right job class for the source. `coverPath()`, `isConvertedFile()`, `isCancelled()` (fresh database check), `syncPlaylistProgress()`, `updateProgress()`. `findExisting()` (static): the latest completed, unedited, non-chapter download of the same video, format and quality whose file still exists; used by single, bulk and playlist downloads. Scopes `pending`, `processing`, `completed`, `failed`. The `deleted` hook removes the cover and a leftover upload. |
 | `Playlist` | `items`, `selectedItems`, `syncProgress()` (recounts finished items, sets `completed` when all are done), `progress_percentage`. |
 | `PlaylistItem` | `playlist`, `download`. |
-| `Setting` | `get`, `set`, `downloadPath()`, `cleanTitles()`, `fetchLyrics()`, `absolutePath()`. Relative paths are anchored to the project root, because web requests run in `public/` and the worker in the project root. |
+| `Setting` | `get`, `set`, `downloadPath()`, `parallelJobs()` (always 1–8), `cleanTitles()`, `fetchLyrics()`, `absolutePath()`. Relative paths are anchored to the project root, because web requests run in `public/` and the worker in the project root. |
 
 ### 9.6 Console commands and schedule
 
 | Command | What it does |
 | --- | --- |
 | `php artisan downloads:waveforms [--force]` | Creates waveforms for finished downloads that have none (or all, with `--force`). |
+| `php artisan downloads:work` | Runs until stopped and keeps `Setting::parallelJobs()` queue workers alive (section 11.20). |
 | `php artisan app:hash-password` | Asks for a password twice and prints `APP_PASSWORD='<hash>'` for `.env`. |
 | Schedule (`routes/console.php`) | `CleanupOldDownloadsJob` daily. |
 
@@ -807,7 +808,7 @@ Because `normalize_volume` is on, the download counts as edited, so `findExistin
 
 1. **Video info.** The form sent the title, ID and thumbnail but not the duration, so `needsVideoInfo()` is true and the job runs `yt-dlp --dump-json` once more. It stores the duration (210 s) and keeps the title and artist the user confirmed.
 2. **Disk check.** 210 s × 320 kbps ÷ 8 × 1.1 ≈ 9 MB, so the download folder needs at least 500 + 9 = 509 MB free (with the default "keep free" of 500 MB).
-3. **Paths.** `FileName::fromTitle` keeps the title, so the target is `<download folder>/Silver Bullet - NOBODY ELSE.mp3`. If that file exists already, the target becomes `Silver Bullet - NOBODY ELSE (1).mp3`.
+3. **Paths.** `FileName::fromTitle` keeps the title, so the target is `<download folder>/Silver Bullet - NOBODY ELSE.mp3`. If that file exists already, the target becomes `Silver Bullet - NOBODY ELSE (1).mp3`. The name is claimed straight away with an empty file, which ffmpeg then overwrites.
 4. **Download:**
 
    ```text
@@ -1133,7 +1134,7 @@ Clicking a notification opens `/history` (or `/queue` for failures) without relo
 | yt-dlp is up to date | no | Settings → System → Update yt-dlp |
 | FFmpeg | yes | `winget install Gyan.FFmpeg` |
 | Deno | no | `winget install DenoLand.Deno` |
-| Queue worker | yes | `composer dev` (or `php artisan queue:work`) |
+| Queue worker | yes | `composer dev` (or `php artisan downloads:work`) |
 | Download folder is writable | yes | Pick another folder |
 | Enough free disk space | no | Free up space or lower "Keep free" |
 | PHP zip extension | no | Enable `extension=zip` in php.ini |
@@ -1190,6 +1191,34 @@ Move → POST /api/settings/move-songs {from:"…\storage\app\downloads"}
 ```
 
 Songs in subfolders (for example chapter-split folders) are left alone. A song still downloading when the folder changes finishes in the old folder. Moving to a folder on another drive copies the file, so a large library takes a moment.
+
+### 11.20 Several downloads at the same time
+
+One queue worker runs one job at a time, so the number of workers decides how many songs are made at once. Settings → Storage → "Downloads at the same time" (1–8, default 2) stores `parallel_jobs`, and `php artisan downloads:work` keeps that many workers alive. It counts both YouTube downloads and file conversions.
+
+**Example:** the setting is 5, and 30 videos are converted on the Files tab.
+
+```text
+downloads:work, every 2 s:
+   drop workers that have exited
+   start workers until 5 are running:
+      php artisan queue:work --max-jobs=1 --max-time=30 --sleep=2
+
+each worker: takes one job, runs it, exits
+             (or exits after about 30 s with nothing to do)
+             downloads:work then starts a fresh one
+
+Files tab, while they run:
+   Converting 30 files · 12 remaining
+   18 done · 5 converting now · 7 waiting
+   [==================>        ]   the whole batch
+```
+
+- **Changing the number** applies within seconds and needs no restart. Raising it starts more workers at the next check. Lowering it stops nothing: running jobs finish, and workers that exit are not replaced until the count is below the new number.
+- **Quality is not affected.** Each conversion is its own FFmpeg process; more at once only uses more CPU. Audio taken from a video is already compressed, so FLAC or WAV add no further loss, and MP3 320 is the best MP3 choice.
+- **How many.** File conversions: up to the number of CPU cores. YouTube: 2 or 3, because more at once makes rate-limit errors likelier. `rate_limit_seconds` still spaces out bulk and playlist jobs.
+- **Same title.** `FileName::reserve` claims each name when a job starts, so two songs with one title become `Title.mp3` and `Title (1).mp3`.
+- **Plain `queue:work`** still works, but runs one job at a time and ignores the setting.
 
 ---
 
@@ -1305,6 +1334,7 @@ All colours are CSS variables in `resources/css/app.css`. `:root` holds the ligh
 | `MAX_UPLOAD_MB` | `4096` | Largest browser upload |
 | `MAX_PLAYLIST_SIZE` | `50` | Most videos per playlist import |
 | `RATE_LIMIT_SECONDS` | `2` | Gap between queued jobs |
+| `PARALLEL_JOBS` | `2` | Downloads and conversions at the same time, 1–8 (Settings can override) |
 | `MIN_DISK_SPACE_MB` | `500` | Space always kept free |
 | `YOUTUBE_JOB_TIMEOUT` | `600` | Seconds per YouTube job |
 | `YOUTUBE_JOB_TRIES` | `3` | Attempts per YouTube job |
@@ -1320,7 +1350,7 @@ Setting::get('key')  →  row in the settings table?  yes → use it (also '' = 
                                                    no  → config('youtube-converter.…') → .env
 ```
 
-The Settings page can change: `download_path`, `max_playlist_size`, `rate_limit_seconds`, `min_disk_space_mb`, `ytdlp_cookies_browser`, `ytdlp_cookies_file`, `clean_titles`, `fetch_lyrics`. `SettingsSeeder` stores the first three numeric defaults. It leaves the download path and cookies out on purpose, so they follow `.env` until changed.
+The Settings page can change: `download_path`, `max_playlist_size`, `rate_limit_seconds`, `min_disk_space_mb`, `parallel_jobs`, `ytdlp_cookies_browser`, `ytdlp_cookies_file`, `clean_titles`, `fetch_lyrics`. `SettingsSeeder` stores the first three numeric defaults. It leaves the download path and cookies out on purpose, so they follow `.env` until changed.
 
 ---
 
@@ -1344,10 +1374,10 @@ The Settings page can change: `download_path`, `max_playlist_size`, `rate_limit_
 
 | Setup | How |
 | --- | --- |
-| Local, Laragon | Apache serves `http://youtube_converter.test`. Run a queue worker (`php artisan queue:work`). Database MySQL. |
-| Local, development | `composer run dev` or `php artisan dev`: server, `queue:listen`, logs and Vite. |
+| Local, Laragon | Apache serves `http://youtube_converter.test`. Run the workers (`php artisan downloads:work`). Database MySQL. |
+| Local, development | `composer run dev` or `php artisan dev`: server, `downloads:work`, logs and Vite. |
 | Docker | `docker compose up -d` → `http://localhost:8000`. The image has PHP 8.3, FFmpeg, the standalone yt-dlp build (can update itself) and Deno. Volumes: `./docker-data:/data` (SQLite database, app key, settings) and `./downloads:/downloads` (music). `entrypoint.sh` generates the app key once, migrates, seeds once, optimises, then runs the worker, scheduler and server. |
-| Server | Same as Docker, or a normal Laravel host with a worker (`queue:work`) and cron (`schedule:run`). Set `APP_PASSWORD`. |
+| Server | Same as Docker, or a normal Laravel host with `php artisan downloads:work` kept running and cron (`schedule:run`). Set `APP_PASSWORD`. |
 
 The Docker build has three stages: Node 22 builds the frontend (`npm ci`, `npm run build`), the Deno binary is copied from `denoland/deno`, and the final PHP image installs Composer dependencies without dev packages.
 
@@ -1364,13 +1394,15 @@ PHPUnit with three suites in `phpunit.xml`. Tests use SQLite in memory and a tem
 | Feature, jobs and services | `Jobs/DownloadYoutubeAudioJobTest`, `Jobs/ConvertLocalFileJobTest`, `YouTubeServiceTest`, `DiskSpaceServiceTest`, `WaveformTest`, `LyricsVolumeRingtoneTest` | Job steps, retries, cancelling, cleanup, waveforms, lyrics, loudness, ringtones |
 | Integration | `RealDownloadTest` | A real download with the real tools |
 
-Run them with `composer test` (or `php artisan test`) using PHP 8.3. At the last full run on 2026-10-27, all 250 tests passed.
+Run them with `composer test` (or `php artisan test`) using PHP 8.3. At the last full run on 2026-11-03, all 254 tests passed.
+
+**Tests and the config cache.** A cached config (`php artisan config:cache` or `optimize`) makes Laravel ignore `phpunit.xml`, so `RefreshDatabase` would drop every table of the real database. `tests/TestCase.php` therefore refuses to start unless the database is `:memory:` and the config is not cached. If it stops you, run `php artisan config:clear`. `composer test` clears the cache itself.
 
 ---
 
 ## 17. Notes found while reviewing the code
 
-Items 1 to 5 were found while writing this document and fixed on 2026-10-27. Items 6 and 7 are still open.
+Items 1 to 5 were found while writing this document and fixed on 2026-10-27. Items 6 and 7 are still open. Item 8 was fixed on 2026-11-03.
 
 1. **Fixed: missing space in a status text.** `DownloadYoutubeAudioJob` wrote `'Splitting into' . count($chapters)`, which showed as "Splitting into12 tracks...". It now shows "Splitting into 12 tracks...".
 2. **Fixed: Clear history left cover images.** `HistoryController::clear` used a query delete, which skipped the model's `deleted` hook, so cover JPEGs of converted files stayed in `storage/app/covers/`. It now deletes the rows one by one (`lazyById(100)`), so the hook removes the covers. Test: `HistoryApiTest::test_clearing_history_removes_cover_images_of_converted_files`.
@@ -1379,3 +1411,4 @@ Items 1 to 5 were found while writing this document and fixed on 2026-10-27. Ite
 5. **Fixed: unused code removed.** `AudioConverterService::extractAudio`, `MetadataService::extractMetadataFromYouTube` (and its test), `Download::markAsProcessing/markAsCompleted/markAsFailed`, and the `formats` entry in `config/youtube-converter.php` (the real list is `Download::FORMATS`). The `downloads.download_url` column is dropped by migration `2026_10_27_000001_drop_download_url_from_downloads_table`.
 6. **Known environment issue.** Under `php artisan dev` on Windows, YouTube lookups made by the web process can fail: the bgutil POT provider's Deno times out after 15 seconds in that `php -S` process. Through Laragon Apache and the queue worker they work.
 7. **`.env.example` still uses SQLite**, while the README's full setup uses MySQL.
+8. **Fixed: tests could wipe the real database.** With a cached config, `php artisan test` ran against the real MySQL database and emptied it. See "Tests and the config cache" in section 16.
