@@ -254,9 +254,9 @@ Terminal 1:
 php artisan serve
 ```
 
-Terminal 2:
+Terminal 2 (runs as many downloads at once as Settings → "Downloads at the same time" says):
 ```bash
-php artisan queue:work
+php artisan downloads:work
 ```
 
 Terminal 3:
@@ -357,7 +357,7 @@ php artisan optimize:clear
 ```
 
 ### Jobs stuck / no progress
-- Ensure worker is running: `php artisan queue:work`
+- Ensure worker is running: `php artisan downloads:work`
 - Retry failed jobs:
   ```bash
   php artisan queue:failed

@@ -143,14 +143,10 @@ class DownloadYoutubeAudioJob implements ShouldQueue
 
             // Download ID keeps temp files of concurrent jobs apart
             $tempFile = $tempPath . '/download_' . $this->download->id . '_' . time();
-            $finalFile = $downloadPath . '/' . $safeFilename . '.' . $this->download->format;
 
             // Never overwrite an earlier download: "Title (1).mp3", "Title (2).mp3", ...
-            $counter = 1;
-            while (file_exists($finalFile)) {
-                $finalFile = $downloadPath . '/' . $safeFilename . ' (' . $counter . ').' . $this->download->format;
-                $counter++;
-            }
+            // The name is claimed now, so a job running alongside cannot take it too
+            $finalFile = FileName::reserve($downloadPath, $safeFilename, $this->download->format);
 
             $this->download->update(['progress' => 5, 'status_text' => 'Starting download...']);
 

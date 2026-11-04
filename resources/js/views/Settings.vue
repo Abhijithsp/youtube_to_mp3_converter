@@ -30,6 +30,14 @@
             <p v-if="errors.min_disk_space_mb" class="field-hint !text-danger">{{ errors.min_disk_space_mb }}</p>
             <p v-else class="field-hint">Downloads stop below this.</p>
           </div>
+          <div>
+            <label for="parallel_jobs" class="field-label">Downloads at the same time</label>
+            <select id="parallel_jobs" v-model.number="form.parallel_jobs" class="field" :class="errors.parallel_jobs && 'field-error'">
+              <option v-for="n in 8" :key="n" :value="n">{{ n }}</option>
+            </select>
+            <p v-if="errors.parallel_jobs" class="field-hint !text-danger">{{ errors.parallel_jobs }}</p>
+            <p v-else class="field-hint">Converting your own files: up to the number of CPU cores. YouTube: 2–3, more can get rate-limited. Needs the worker started with <code class="font-mono">php artisan downloads:work</code>.</p>
+          </div>
         </div>
 
         <div class="mt-4 rounded-xl bg-surface-2 p-3">
@@ -345,6 +353,7 @@ export default {
       form: {
         download_path: '',
         min_disk_space_mb: 500,
+        parallel_jobs: 2,
         max_playlist_size: 50,
         rate_limit_seconds: 2,
         ytdlp_cookies_browser: '',

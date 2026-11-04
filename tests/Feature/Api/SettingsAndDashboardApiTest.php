@@ -54,6 +54,30 @@ class SettingsAndDashboardApiTest extends TestCase
         $this->assertSame('4', Setting::get('rate_limit_seconds'));
     }
 
+    public function test_downloads_at_the_same_time_can_be_set_from_1_to_8(): void
+    {
+        $this->getJson('/api/settings')->assertJsonPath('parallel_jobs', 2);
+
+        $this->putJson('/api/settings', $this->validSettings(['parallel_jobs' => 5]))->assertOk();
+        $this->assertSame(5, Setting::parallelJobs());
+        $this->getJson('/api/settings')->assertJsonPath('parallel_jobs', 5);
+
+        $this->putJson('/api/settings', $this->validSettings(['parallel_jobs' => 9]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('parallel_jobs');
+
+        // A hand-edited value outside the range is kept within it
+        Setting::set('parallel_jobs', '0');
+        $this->assertSame(1, Setting::parallelJobs());
+    }
+
+    public function test_php_artisan_dev_runs_the_parallel_worker(): void
+    {
+        $queue = collect(\Illuminate\Foundation\DevCommands::commands())->firstWhere('name', 'queue');
+
+        $this->assertSame('php artisan downloads:work', $queue['command']);
+    }
+
     public function test_changing_the_folder_reports_the_songs_left_in_the_old_one(): void
     {
         Download::factory()->completed($this->makeAudioFile('LADY.mp3'))->create();

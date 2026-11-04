@@ -24,6 +24,14 @@ class Setting extends Model
     }
 
     /**
+     * Downloads and conversions that run at the same time (Settings page, 1-8)
+     */
+    public static function parallelJobs(): int
+    {
+        return min(8, max(1, (int) static::get('parallel_jobs', config('youtube-converter.parallel_jobs', 2))));
+    }
+
+    /**
      * Strip "(Official Music Video)" and similar from new titles (Settings page, default on)
      */
     public static function cleanTitles(): bool

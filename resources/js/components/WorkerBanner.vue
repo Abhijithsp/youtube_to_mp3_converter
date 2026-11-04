@@ -10,7 +10,7 @@
         Downloads stay queued until it runs. Start it with
         <code class="rounded bg-black/10 px-1 font-mono text-xs dark:bg-white/10">composer dev</code>
         or
-        <code class="rounded bg-black/10 px-1 font-mono text-xs dark:bg-white/10">php artisan queue:work</code>.
+        <code class="rounded bg-black/10 px-1 font-mono text-xs dark:bg-white/10">php artisan downloads:work</code>.
       </p>
     </div>
   </div>

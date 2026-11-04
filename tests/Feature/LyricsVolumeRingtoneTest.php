@@ -138,7 +138,8 @@ class LyricsVolumeRingtoneTest extends TestCase
         $filter = $command[array_search('-af', $command, true) + 1];
         $this->assertStringStartsWith('silenceremove=', $filter);
         $this->assertStringEndsWith(',' . AudioConverterService::LOUDNESS_FILTER, $filter);
-        $this->assertSame('44100', $command[array_search('-ar', $command, true) + 1]);
+        // An explicit rate, or loudnorm would output 192 kHz; 48 kHz so video audio is not downsampled
+        $this->assertSame('48000', $command[array_search('-ar', $command, true) + 1]);
     }
 
     public function test_the_ringtone_command_cuts_fades_and_encodes_mp3(): void

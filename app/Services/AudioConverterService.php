@@ -75,8 +75,10 @@ class AudioConverterService
         }
 
         $command = [...$command, ...match ($format) {
-            'flac' => ['-ar', '44100', '-c:a', 'flac', '-compression_level', '8'],
-            // Studio-quality WAV: 24-bit PCM at 48 kHz, YouTube's native sample rate (no resampling)
+            // Lossless formats stay at 48 kHz, the sample rate of YouTube and most videos, so
+            // nothing is downsampled. An explicit rate is still needed: loudnorm would output 192 kHz.
+            'flac' => ['-ar', '48000', '-c:a', 'flac', '-compression_level', '8'],
+            // Studio-quality WAV: 24-bit PCM at 48 kHz
             'wav' => ['-ar', '48000', '-c:a', 'pcm_s24le'],
             default => ['-ar', '44100', '-c:a', 'libmp3lame', '-b:a', $bitrate],
         }];
@@ -143,7 +145,9 @@ class AudioConverterService
                 throw new Exception('Conversion failed: ' . ProcessOutput::error($result));
             }
 
-            if (!file_exists($outputPath)) {
+            // Jobs reserve the output name with an empty file, so check something was written
+            clearstatcache(true, $outputPath);
+            if (!file_exists($outputPath) || filesize($outputPath) === 0) {
                 throw new Exception('Output file was not created');
             }
 

@@ -114,6 +114,14 @@ class AudioConverterServiceTest extends TestCase
         $this->assertNotContains('-b:a', $command);
     }
 
+    public function test_flac_keeps_48_khz_so_video_audio_is_not_downsampled(): void
+    {
+        $command = $this->service->buildCommand('in.mp4', 'out.flac', 'flac', 320);
+
+        $this->assertSame('48000', $command[array_search('-ar', $command, true) + 1]);
+        $this->assertNotContains('-b:a', $command);
+    }
+
     public function test_trimming_seeks_the_input(): void
     {
         $command = $this->service->buildCommand('in.webm', 'out.mp3', 'mp3', 320, ['trim_start' => 12, 'trim_end' => 95]);

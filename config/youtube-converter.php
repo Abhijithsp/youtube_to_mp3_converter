@@ -100,6 +100,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Parallel Jobs
+    |--------------------------------------------------------------------------
+    |
+    | How many downloads and conversions run at the same time (1-8), when the
+    | worker is started with `php artisan downloads:work`. Can be changed on
+    | the Settings page; the worker picks up the new number within seconds.
+    |
+    */
+    'parallel_jobs' => env('PARALLEL_JOBS', 2),
+
+    /*
+    |--------------------------------------------------------------------------
     | Minimum Disk Space (MB)
     |--------------------------------------------------------------------------
     |

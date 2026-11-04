@@ -102,14 +102,9 @@ class ConvertLocalFileJob implements ShouldQueue
             }
 
             $safeFilename = FileName::fromTitle($this->download->title, 'file-' . $this->download->id);
-            $finalFile = $downloadPath . '/' . $safeFilename . '.' . $this->download->format;
-
-            // Never overwrite anything, including the original when it sits in the download folder
-            $counter = 1;
-            while (file_exists($finalFile)) {
-                $finalFile = $downloadPath . '/' . $safeFilename . ' (' . $counter . ').' . $this->download->format;
-                $counter++;
-            }
+            // Never overwrite anything, including the original when it sits in the download folder.
+            // The name is claimed now, so a job running alongside cannot take it too
+            $finalFile = FileName::reserve($downloadPath, $safeFilename, $this->download->format);
 
             // Step 4: Convert (most of the wait: 5-85% of the bar)
             $editOptions = $this->editOptions();

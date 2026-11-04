@@ -34,4 +34,35 @@ class FileName
 
         return $name;
     }
+
+    /**
+     * Claim "<name>.<ext>" in $folder, or "<name> (1).<ext>", "<name> (2).<ext>", ... when taken,
+     * by creating an empty file there. Creating it ('x' mode fails when the file exists) means
+     * two jobs running at the same time can never pick the same name.
+     */
+    public static function reserve(string $folder, string $name, string $extension): string
+    {
+        if (!is_dir($folder)) {
+            throw new \RuntimeException("Folder does not exist: {$folder}");
+        }
+
+        for ($counter = 0; ; $counter++) {
+            $path = $folder . '/' . $name . ($counter ? " ({$counter})" : '') . '.' . $extension;
+
+            if (file_exists($path)) {
+                continue;
+            }
+
+            if ($handle = @fopen($path, 'x')) {
+                fclose($handle);
+
+                return $path;
+            }
+
+            // Not taken but still not creatable: the folder is read-only
+            if (!file_exists($path)) {
+                throw new \RuntimeException("Cannot create {$path}");
+            }
+        }
+    }
 }

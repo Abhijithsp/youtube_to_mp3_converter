@@ -79,4 +79,29 @@ class TrackTitleTest extends TestCase
         $this->assertSame('fallback', FileName::fromTitle('...', 'fallback'));
         $this->assertLessThanOrEqual(180, strlen(FileName::fromTitle(str_repeat('ആ', 200))));
     }
+
+    public function test_reserving_a_name_claims_it_so_jobs_running_together_never_share_one(): void
+    {
+        $folder = sys_get_temp_dir() . '/reserve-' . uniqid();
+        mkdir($folder);
+
+        try {
+            file_put_contents($folder . '/LADY.mp3', 'earlier song');
+
+            // Two jobs finishing the same song at once each get their own name
+            $first = FileName::reserve($folder, 'LADY', 'mp3');
+            $second = FileName::reserve($folder, 'LADY', 'mp3');
+
+            $this->assertSame($folder . '/LADY (1).mp3', $first);
+            $this->assertSame($folder . '/LADY (2).mp3', $second);
+            $this->assertFileExists($first);
+            $this->assertSame('earlier song', file_get_contents($folder . '/LADY.mp3'));
+
+            $this->expectException(\RuntimeException::class);
+            FileName::reserve($folder . '/missing', 'LADY', 'mp3');
+        } finally {
+            array_map('unlink', glob($folder . '/*'));
+            rmdir($folder);
+        }
+    }
 }

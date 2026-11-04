@@ -6,9 +6,17 @@
         <span class="tile-icon h-10 w-10 shrink-0" :class="running ? 'bg-primary-soft text-on-primary-soft' : 'bg-success-soft text-success'">
           <AppIcon :path="running ? mdiLoading : mdiCheckAll" :size="22" :spin="running" />
         </span>
-        <div class="min-w-0">
-          <h2 class="card-title">{{ running ? `Converting ${downloads.length} file${downloads.length === 1 ? '' : 's'}…` : summary }}</h2>
-          <p class="text-xs text-fg-muted">Finished songs go to History, next to your YouTube downloads.</p>
+        <div class="min-w-0 flex-1">
+          <h2 class="card-title">
+            {{ running ? `Converting ${downloads.length} file${downloads.length === 1 ? '' : 's'} · ${counts.remaining} remaining` : summary }}
+          </h2>
+          <p class="text-xs text-fg-muted">
+            <template v-if="running">
+              {{ counts.done }} done · {{ counts.converting }} converting now · {{ counts.waiting }} waiting<template v-if="counts.failed"> · {{ counts.failed }} failed</template>
+            </template>
+            <template v-else>Finished songs go to History, next to your YouTube downloads.</template>
+          </p>
+          <LinearProgress v-if="running" class="mt-2" :value="overallProgress" />
         </div>
       </div>
       <div class="divide-y divide-line">
@@ -312,6 +320,26 @@ export default {
     // Converted files from this computer whose original is still there
     originals() {
       return this.downloads.filter((d) => d.status === 'completed' && d.original_available);
+    },
+    // "30 files · 12 remaining": several convert at once (Settings → Downloads at the same time)
+    counts() {
+      const count = (...statuses) => this.downloads.filter((d) => statuses.includes(d.status)).length;
+      return {
+        done: count('completed'),
+        converting: count('processing'),
+        waiting: count('pending'),
+        failed: count('failed', 'cancelled'),
+        remaining: count('processing', 'pending'),
+      };
+    },
+    // The whole batch, counting each file's own progress, so the bar moves while files convert
+    overallProgress() {
+      if (!this.downloads.length) return 0;
+      const total = this.downloads.reduce(
+        (sum, d) => sum + (['completed', 'failed', 'cancelled'].includes(d.status) ? 100 : d.progress || 0),
+        0,
+      );
+      return total / this.downloads.length;
     },
     summary() {
       const done = this.playable.length;

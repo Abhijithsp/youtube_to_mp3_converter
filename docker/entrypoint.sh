@@ -27,8 +27,9 @@ fi
 
 php artisan optimize --no-interaction
 
-# Restart the worker and scheduler if they ever stop
-(while true; do php artisan queue:work --sleep=2 --tries=3 --no-interaction || true; sleep 2; done) &
+# Restart the workers and scheduler if they ever stop. downloads:work runs as many
+# downloads at once as Settings → "Downloads at the same time" asks for
+(while true; do php artisan downloads:work --no-interaction || true; sleep 2; done) &
 (while true; do php artisan schedule:work --no-interaction || true; sleep 5; done) &
 
 echo "AudioFetch is running on http://localhost:${APP_PORT:-8000}"
