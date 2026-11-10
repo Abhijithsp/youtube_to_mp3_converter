@@ -87,8 +87,10 @@ class DownloadController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'youtube_url' => 'required|url',
-            'format' => ['required', Rule::in(Download::FORMATS)],
-            'quality' => 'required|in:192,256,320',
+            'format' => ['required', Rule::in([...Download::FORMATS, Download::VIDEO_FORMAT])],
+            'quality' => 'required_unless:format,' . Download::VIDEO_FORMAT . '|nullable|in:192,256,320',
+            // Height of the chosen resolution, from the video's own list
+            'video_height' => 'required_if:format,' . Download::VIDEO_FORMAT . '|nullable|integer|min:100|max:8000',
             'title' => 'nullable|string|max:255',
             'artist' => 'nullable|string|max:255',
             'album' => 'nullable|string|max:255',
@@ -108,6 +110,10 @@ class DownloadController extends Controller
             }
             if ($request->boolean('split_chapters') && ((int) $request->trim_start > 0 || $request->filled('trim_end'))) {
                 $validator->errors()->add('split_chapters', 'Splitting into chapters works on the whole video. Remove the trim first.');
+            }
+            if ($request->format === Download::VIDEO_FORMAT && ($request->filled('trim_start') || $request->filled('trim_end')
+                || $request->boolean('remove_silence') || $request->boolean('normalize_volume') || $request->boolean('split_chapters'))) {
+                $validator->errors()->add('format', 'Trimming and audio edits are only available for audio downloads.');
             }
         });
 
@@ -140,8 +146,13 @@ class DownloadController extends Controller
             $edited = $request->filled('trim_start') || $request->filled('trim_end') || $request->boolean('remove_silence')
                 || $request->boolean('normalize_volume') || $request->boolean('split_chapters');
 
+            // Bitrate does not apply to videos, so they all store the column's default
+            $isVideo = $request->format === Download::VIDEO_FORMAT;
+            $quality = $isVideo ? '320' : (string) $request->quality;
+            $videoHeight = $isVideo ? (int) $request->video_height : null;
+
             // Edited (trimmed) downloads are always made fresh
-            $existing = $edited ? null : Download::findExisting($videoId, $request->format, (string) $request->quality);
+            $existing = $edited ? null : Download::findExisting($videoId, $request->format, $quality, $videoHeight);
 
             if ($existing) {
                 return response()->json([
@@ -158,7 +169,8 @@ class DownloadController extends Controller
                 'title' => $request->title ?: Download::PLACEHOLDER_TITLE,
                 'thumbnail_url' => $request->thumbnail_url,
                 'format' => $request->format,
-                'quality' => (string) $request->quality,
+                'quality' => $quality,
+                'video_height' => $videoHeight,
                 'artist' => $request->artist,
                 'album' => $request->album,
                 'year' => $request->year,
@@ -172,7 +184,7 @@ class DownloadController extends Controller
             ]);
 
             // Dispatch job
-            DownloadYoutubeAudioJob::dispatch($download);
+            dispatch($download->job());
 
             return response()->json([
                 'success' => true,
@@ -581,6 +593,7 @@ class DownloadController extends Controller
             'mp3' => 'audio/mpeg',
             'flac' => 'audio/flac',
             'wav' => 'audio/wav',
+            'mp4' => 'video/mp4',
         ];
 
         // BinaryFileResponse supports HTTP range requests, so players can seek
@@ -756,8 +769,8 @@ class DownloadController extends Controller
             return response()->json(['message' => 'The PHP zip extension is not installed on this server.'], 500);
         }
 
-        // Keep the order the songs were selected in
-        $downloads = Download::completed()->whereIn('id', $ids)->get()
+        // Keep the order the songs were selected in. Videos are too large to pack
+        $downloads = Download::completed()->whereIn('id', $ids)->where('format', '!=', Download::VIDEO_FORMAT)->get()
             ->filter(fn (Download $download) => $download->file_path && is_file($download->file_path))
             ->sortBy(fn (Download $download) => $ids->search($download->id))
             ->values();

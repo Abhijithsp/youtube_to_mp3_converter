@@ -122,7 +122,8 @@ function shuffled(list, first) {
  * Items without a file (not completed) are skipped.
  */
 export function playAll(downloads, start = null) {
-    const playable = downloads.filter((d) => d?.download_url);
+    // Videos are saved, not played: the player is audio only
+    const playable = downloads.filter((d) => d?.download_url && !d.is_video);
     if (!playable.length) {
         notify('Nothing to play yet.');
         return;
@@ -137,7 +138,7 @@ export function playAll(downloads, start = null) {
 
 /** Play one download; when it is part of `list`, the rest of the list follows */
 export function play(download, list = null) {
-    if (!download?.download_url) return;
+    if (!download?.download_url || download.is_video) return;
 
     if (isCurrent(download)) {
         audio.play().catch(() => {});

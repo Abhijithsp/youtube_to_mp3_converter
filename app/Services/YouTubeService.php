@@ -184,6 +184,7 @@ class YouTubeService
                 'thumbnail' => $info['thumbnail'] ?? null,
                 'duration' => isset($info['duration']) ? (int) round($info['duration']) : null,
                 'chapters' => $this->chaptersFrom($info),
+                'video_qualities' => $this->videoQualitiesFrom($info),
                 'url' => $url,
             ];
         } catch (Exception $e) {
@@ -218,6 +219,62 @@ class YouTubeService
         }
 
         return count($chapters) >= 2 ? $chapters : [];
+    }
+
+    /**
+     * Resolutions this video really has, best first, with the stream each one would use
+     * (the same preference as videoFormatSelector) and its size including the audio
+     */
+    private function videoQualitiesFrom(array $info): array
+    {
+        $formats = collect($info['formats'] ?? []);
+        $sizeOf = fn (array $format) => (int) ($format['filesize'] ?? $format['filesize_approx'] ?? 0);
+
+        $audioSize = $formats
+            ->filter(fn ($format) => ($format['vcodec'] ?? null) === 'none' && ($format['ext'] ?? null) === 'm4a')
+            ->map($sizeOf)
+            ->max() ?? 0;
+
+        return $formats
+            // Video-only streams, as videoFormatSelector picks them
+            ->filter(fn ($format) => !in_array($format['vcodec'] ?? 'none', ['none', null], true)
+                && in_array($format['acodec'] ?? 'none', ['none', null], true)
+                && ($format['height'] ?? 0) >= 100)
+            ->groupBy('height')
+            ->map(function ($streams, $height) use ($sizeOf, $audioSize) {
+                // Streams of a known size first, so the list can show one
+                $streams = $streams->sortByDesc(fn ($format) => [$format['fps'] ?? 0, $sizeOf($format) > 0, $format['tbr'] ?? 0]);
+                $stream = $streams->first(fn ($format) => str_starts_with($format['vcodec'], 'avc1'))
+                    ?? $streams->first(fn ($format) => str_starts_with($format['vcodec'], 'av01'))
+                    ?? $streams->first();
+
+                // Portrait videos (Shorts): 1080x1920 is a 1080p video
+                $lines = min((int) $height, (int) ($stream['width'] ?? $height));
+                $fps = (int) round($stream['fps'] ?? 0);
+                $size = $sizeOf($stream);
+
+                return [
+                    'height' => (int) $height,
+                    'label' => $lines . 'p' . ($fps > 30 ? $fps : '') . match (true) {
+                        $lines >= 4320 => ' (8K)',
+                        $lines >= 2160 => ' (4K)',
+                        $lines >= 1440 => ' (2K)',
+                        default => '',
+                    },
+                    'codec' => match (true) {
+                        str_starts_with($stream['vcodec'], 'avc1') => 'H.264',
+                        str_starts_with($stream['vcodec'], 'av01') => 'AV1',
+                        str_starts_with($stream['vcodec'], 'vp') => 'VP9',
+                        default => $stream['vcodec'],
+                    },
+                    // H.264 plays on practically everything; the newer codecs do not
+                    'compatible' => str_starts_with($stream['vcodec'], 'avc1'),
+                    'size' => $size ? $size + $audioSize : null,
+                ];
+            })
+            ->sortByDesc('height')
+            ->values()
+            ->all();
     }
 
     private function yearFrom(array $info): ?int
@@ -358,6 +415,81 @@ class YouTubeService
             ]);
             throw $e;
         }
+    }
+
+    /**
+     * yt-dlp format choice for a resolution: H.264 with AAC plays everywhere, so it comes
+     * first. Above 1080p YouTube has no H.264, so AV1 is next, then whatever exists at
+     * that height. The last steps only apply when the height is no longer offered.
+     */
+    public function videoFormatSelector(int $height): string
+    {
+        return implode('/', [
+            "bv[height={$height}][vcodec^=avc1]+ba[ext=m4a]",
+            "bv[height={$height}][vcodec^=av01]+ba[ext=m4a]",
+            "bv[height={$height}]+ba[ext=m4a]",
+            "bv[height<={$height}]+ba",
+            "b[height<={$height}]",
+            'b',
+        ]);
+    }
+
+    /**
+     * Download a video as "<outputPath>.mp4". The streams are joined as they are, without
+     * re-encoding, so nothing is lost. The callback gets the overall percent and size.
+     */
+    public function downloadVideo(string $url, string $outputPath, int $height, int $timeout, ?callable $progressCallback = null): bool
+    {
+        $arguments = [
+            '-f', $this->videoFormatSelector($height),
+            '--merge-output-format', 'mp4',
+            '--remux-video', 'mp4', // A single stream that is not MP4 yet
+            // A literal % in the path would be read as a template field
+            '-o', str_replace('%', '%%', $outputPath) . '.%(ext)s',
+            '--no-playlist',
+            '--no-part',
+            '--newline',
+            '--no-warnings',
+            $url,
+        ];
+
+        Log::info('Executing yt-dlp video download', ['url' => $url, 'output' => $outputPath, 'height' => $height]);
+
+        $streams = 0;
+
+        $result = $this->runYtDlp($arguments, $timeout, $progressCallback
+            ? function (string $type, string $output) use ($progressCallback, &$streams) {
+                if ($progress = $this->parseVideoProgress($output, $streams)) {
+                    $progressCallback(...$progress);
+                }
+            }
+            : null);
+
+        if (!$result->successful()) {
+            Log::error('yt-dlp video download failed', [
+                'exit_code' => $result->exitCode(),
+                'error' => ProcessOutput::error($result),
+            ]);
+            throw $this->failure('Download failed', $result);
+        }
+
+        return true;
+    }
+
+    /**
+     * Overall [percent, size|null] of a video download. HD video comes as two downloads, each
+     * counting from 0 to 100. The video is nearly all of the size, so it fills 90% of the bar
+     * and the audio the rest. $streams carries the count of started downloads between chunks.
+     */
+    public function parseVideoProgress(string $output, int &$streams): ?array
+    {
+        $streams += preg_match_all('/\[download\] Destination:/', $output);
+
+        if (!$progress = $this->parseDownloadProgress($output)) {
+            return null;
+        }
+
+        return [$streams > 1 ? 90 + $progress[0] * 0.1 : $progress[0] * 0.9, $progress[1]];
     }
 
     /**

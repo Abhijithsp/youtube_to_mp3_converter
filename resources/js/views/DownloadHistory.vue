@@ -35,6 +35,7 @@
           <option value="mp3">MP3</option>
           <option value="flac">FLAC</option>
           <option value="wav">WAV</option>
+          <option value="mp4">MP4 video</option>
         </select>
         <select v-model="source" class="field sm:w-40" aria-label="Source" @change="fetchHistory(1)">
           <option value="">All sources</option>
@@ -92,7 +93,7 @@
           :key="d.id"
           :download="d"
           :show-status="false"
-          :selectable="selecting"
+          :selectable="selecting && !d.is_video"
           :selected="!!selected[d.id]"
           @toggle="toggleSelected(d)"
           @contextmenu="!selecting && openActions(d, $event)"
@@ -104,7 +105,7 @@
               :class="isPlaying(d) && '!text-primary'"
               :title="isPlaying(d) ? 'Pause' : 'Play'"
               :aria-label="isPlaying(d) ? 'Pause' : 'Play'"
-              @click="toggle(d, downloads)"
+              @click="d.is_video ? playVideo(d) : toggle(d, downloads)"
             >
               <AppIcon :path="isPlaying(d) ? mdiPauseCircle : mdiPlayCircleOutline" />
             </button>
@@ -224,7 +225,7 @@ import RingtoneDialog from '../components/RingtoneDialog.vue';
 import TagEditorDialog from '../components/TagEditorDialog.vue';
 import { downloadAPI, historyAPI } from '../services/api';
 import { forget, isCurrent, player, playAll, stop, toggle } from '../player';
-import { confirmDialog, errorMessage, notify } from '../ui';
+import { confirmDialog, errorMessage, notify, playVideo } from '../ui';
 
 export default {
   name: 'DownloadHistory',
@@ -286,8 +287,11 @@ export default {
     },
     sheetActions() {
       return [
-        { label: 'Edit tags', icon: mdiPencilOutline, run: (d) => (this.editing = d) },
-        { label: 'Make ringtone', icon: mdiBellRingOutline, run: (d) => (this.ringtoneFor = d) },
+        // Rewriting a video of several GB for tags is not worth it, and ringtones are for songs
+        ...(this.actionsFor?.is_video ? [] : [
+          { label: 'Edit tags', icon: mdiPencilOutline, run: (d) => (this.editing = d) },
+          { label: 'Make ringtone', icon: mdiBellRingOutline, run: (d) => (this.ringtoneFor = d) },
+        ]),
         // On wider screens Save has its own button in the row
         ...(this.menuAt ? [] : [{ label: 'Save file', icon: mdiTrayArrowDown, run: (d) => window.location.assign(d.download_url) }]),
         ...(this.canOpenFolder ? [{ label: 'Show in folder', icon: mdiFolderOpenOutline, run: (d) => this.reveal(d) }] : []),
@@ -297,7 +301,8 @@ export default {
       ];
     },
     pageSelected() {
-      return this.downloads.length > 0 && this.downloads.every((d) => this.selected[d.id]);
+      const songs = this.downloads.filter((d) => !d.is_video);
+      return songs.length > 0 && songs.every((d) => this.selected[d.id]);
     },
   },
   created() {
@@ -343,6 +348,7 @@ export default {
     },
 
     toggle,
+    playVideo,
 
     async reveal(download) {
       try {
@@ -437,7 +443,8 @@ export default {
     togglePage() {
       const selected = { ...this.selected };
       const select = !this.pageSelected;
-      for (const d of this.downloads) {
+      // Videos are too large for a ZIP
+      for (const d of this.downloads.filter((item) => !item.is_video)) {
         if (select) selected[d.id] = true;
         else delete selected[d.id];
       }

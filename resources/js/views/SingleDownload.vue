@@ -36,7 +36,7 @@
         <div class="grid gap-4 sm:grid-cols-2">
           <div>
             <span class="field-label">Format</span>
-            <SegmentedControl v-model="format" label="Format" :options="formatOptions" :disabled="submitting" />
+            <SegmentedControl v-model="format" label="Format" :options="audioFormats" :disabled="submitting" />
           </div>
           <div>
             <span class="field-label">Bitrate</span>
@@ -213,7 +213,13 @@
           <span class="field-label">Format</span>
           <SegmentedControl v-model="format" label="Format" :options="formatOptions" :disabled="submitting" />
         </div>
-        <div>
+        <div v-if="isVideo">
+          <label for="video-quality" class="field-label">Video quality</label>
+          <select id="video-quality" v-model.number="videoHeight" class="field" :disabled="submitting">
+            <option v-for="q in videoQualities" :key="q.height" :value="q.height">{{ qualityLabel(q) }}</option>
+          </select>
+        </div>
+        <div v-else>
           <span class="field-label">Bitrate</span>
           <SegmentedControl v-model="quality" label="Bitrate" :options="qualityOptions" :disabled="submitting || format !== 'mp3'" />
           <p v-if="format === 'flac'" class="field-hint">FLAC is lossless, so bitrate does not apply.</p>
@@ -221,8 +227,16 @@
         </div>
       </div>
 
+      <template v-if="isVideo">
+        <p v-if="chosenQuality && !chosenQuality.compatible" class="flex items-start gap-1.5 text-xs text-warning">
+          <AppIcon :path="mdiAlertCircle" :size="16" class="shrink-0" />
+          <span>YouTube only has this quality as {{ chosenQuality.codec }}. It plays in VLC and modern browsers, but some older TVs, phones and video editors cannot open it. Choose an H.264 quality for those.</span>
+        </p>
+        <p class="field-hint !mt-2">Saved exactly as YouTube stores it, with no re-encoding, in the Videos folder.</p>
+      </template>
+
       <!-- Trim / silence -->
-      <Disclosure v-model="showEdit" label="Edit audio" :badge="editSummary">
+      <Disclosure v-if="!isVideo" v-model="showEdit" label="Edit audio" :badge="editSummary">
         <div class="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
           <div>
             <label for="trim-start" class="field-label">Start at</label>
@@ -269,7 +283,7 @@
       </Disclosure>
 
       <!-- Chapters: one file per track -->
-      <div v-if="chapters.length" class="rounded-xl bg-surface-2 p-3" style="box-shadow: var(--md-inset)">
+      <div v-if="chapters.length && !isVideo" class="rounded-xl bg-surface-2 p-3" style="box-shadow: var(--md-inset)">
         <label class="flex cursor-pointer items-start gap-3 text-sm text-fg">
           <input v-model="splitChapters" type="checkbox" class="checkbox mt-0.5" />
           <span class="min-w-0 flex-1">
@@ -338,7 +352,7 @@
           <AppIcon :path="mdiPlus" :size="18" />
           Another
         </button>
-        <button v-if="download.status === 'completed'" type="button" class="btn btn-tonal btn-sm" @click="toggle(download)">
+        <button v-if="download.status === 'completed'" type="button" class="btn btn-tonal btn-sm" @click="download.is_video ? playVideo(download) : toggle(download)">
           <AppIcon :path="isPlaying ? mdiPause : mdiPlay" :size="18" />
           {{ isPlaying ? 'Pause' : 'Play' }}
         </button>
@@ -385,7 +399,7 @@ import PageHeader from '../components/PageHeader.vue';
 import SegmentedControl from '../components/SegmentedControl.vue';
 import { isCurrent, player, toggle } from '../player';
 import { downloadAPI, searchAPI } from '../services/api';
-import { errorMessage, extractYoutubeLinks, formatDuration, looksLikeYoutubeUrl, notify, parseTime, readStorage, writeStorage, YOUTUBE_URL } from '../ui';
+import { errorMessage, extractYoutubeLinks, formatBytes, formatDuration, looksLikeYoutubeUrl, notify, parseTime, playVideo, readStorage, writeStorage, YOUTUBE_URL } from '../ui';
 
 export default {
   name: 'SingleDownload',
@@ -401,7 +415,7 @@ export default {
       tips: [
         { icon: mdiLinkVariant, title: 'Paste a link', text: 'Any YouTube, Shorts or YouTube Music link. Playlist links open the Playlist page.' },
         { icon: mdiMagnify, title: 'Or search', text: 'Type a song or artist, press Enter and pick a result.' },
-        { icon: mdiTune, title: 'Choose how', text: 'MP3 up to 320k, or lossless FLAC and WAV. Trim, tag and even out the volume.' },
+        { icon: mdiTune, title: 'Choose how', text: 'MP3 up to 320k, lossless FLAC and WAV, or MP4 video. Trim, tag and even out the volume.' },
       ],
       bulkText: '',
       bulkResult: null,
@@ -415,6 +429,7 @@ export default {
       submitting: false,
       format: 'mp3',
       quality: '320',
+      videoHeight: null,
       showTags: false,
       showEdit: false,
       tags: { title: '', artist: '', album: '', year: null, genre: '' },
@@ -428,7 +443,7 @@ export default {
       debounceTimer: null,
       lookupId: 0,
       canPaste: !!navigator.clipboard?.readText,
-      formatOptions: [
+      audioFormats: [
         { value: 'mp3', label: 'MP3' },
         { value: 'flac', label: 'FLAC' },
         { value: 'wav', label: 'WAV' },
@@ -461,10 +476,23 @@ export default {
   computed: {
     modeSubtitle() {
       return {
-        single: 'Paste a YouTube link or search, and save it as MP3, FLAC or WAV.',
+        single: 'Paste a YouTube link or search, and save it as MP3, FLAC, WAV or MP4.',
         bulk: 'Paste several YouTube links and queue them all at once.',
         files: 'Convert your own video and audio files to MP3, FLAC or WAV.',
       }[this.mode];
+    },
+    videoQualities() {
+      return this.video?.video_qualities || [];
+    },
+    // MP4 is only offered for one video at a time, when YouTube lists its resolutions
+    formatOptions() {
+      return this.videoQualities.length ? [...this.audioFormats, { value: 'mp4', label: 'MP4' }] : this.audioFormats;
+    },
+    isVideo() {
+      return this.format === 'mp4';
+    },
+    chosenQuality() {
+      return this.videoQualities.find((q) => q.height === this.videoHeight) || null;
     },
     // Nothing typed or found yet: show what the page can do
     idle() {
@@ -525,7 +553,10 @@ export default {
       writeStorage('normalize-volume', on ? '1' : '0');
     },
     mode(mode) {
-      if (mode === 'bulk') this.$nextTick(() => this.$refs.bulk?.focus());
+      if (mode === 'bulk') {
+        if (this.isVideo) this.format = 'mp3';
+        this.$nextTick(() => this.$refs.bulk?.focus());
+      }
     },
     // Opening a search from Home (?q=) or a link (?url=)
     '$route.query': {
@@ -553,6 +584,11 @@ export default {
   methods: {
     formatDuration,
     toggle,
+    playVideo,
+
+    qualityLabel(quality) {
+      return [quality.label, quality.codec, quality.size ? `about ${formatBytes(quality.size)}` : null].filter(Boolean).join(' · ');
+    },
 
     formatViews(views) {
       return new Intl.NumberFormat(undefined, { notation: 'compact' }).format(views);
@@ -648,6 +684,10 @@ export default {
         this.trim = { start: '', end: '' };
         this.removeSilence = false;
         this.splitChapters = false;
+        // Best quality that plays everywhere; the list is sorted best first
+        const qualities = this.videoQualities;
+        this.videoHeight = (qualities.find((q) => q.compatible) || qualities[0])?.height ?? null;
+        if (this.isVideo && !qualities.length) this.format = 'mp3';
       } catch (error) {
         if (lookupId !== this.lookupId) return;
         this.inputError = errorMessage(error, 'Could not load this video.');
@@ -662,18 +702,20 @@ export default {
         const { data } = await downloadAPI.create({
           youtube_url: this.video.url,
           format: this.format,
-          quality: this.quality,
+          quality: this.isVideo ? null : this.quality,
+          video_height: this.isVideo ? this.videoHeight : null,
           title: this.tags.title || this.video.title,
           artist: this.tags.artist || null,
           album: this.tags.album || null,
           year: this.tags.year || null,
           genre: this.tags.genre || null,
           thumbnail_url: this.video.thumbnail,
-          trim_start: this.trimStart || null,
-          trim_end: this.trimEnd && this.trimEnd < (this.video.duration || Infinity) ? this.trimEnd : null,
-          remove_silence: this.removeSilence,
-          normalize_volume: this.normalizeVolume,
-          split_chapters: this.splitChapters && this.chapters.length > 1,
+          // The audio edits do not apply to videos
+          trim_start: (!this.isVideo && this.trimStart) || null,
+          trim_end: !this.isVideo && this.trimEnd && this.trimEnd < (this.video.duration || Infinity) ? this.trimEnd : null,
+          remove_silence: !this.isVideo && this.removeSilence,
+          normalize_volume: !this.isVideo && this.normalizeVolume,
+          split_chapters: !this.isVideo && this.splitChapters && this.chapters.length > 1,
         });
         this.download = data.download;
         if (data.download.status === 'completed') {

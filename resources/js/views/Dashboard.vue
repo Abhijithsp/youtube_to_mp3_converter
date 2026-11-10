@@ -96,7 +96,7 @@
               :class="isPlaying(download) && '!text-primary'"
               :title="isPlaying(download) ? 'Pause' : 'Play'"
               :aria-label="isPlaying(download) ? 'Pause' : 'Play'"
-              @click="toggle(download, recent)"
+              @click="download.is_video ? playVideo(download) : toggle(download, recent)"
             >
               <AppIcon :path="isPlaying(download) ? mdiPauseCircle : mdiPlayCircleOutline" />
             </button>
@@ -133,7 +133,7 @@ import PageHeader from '../components/PageHeader.vue';
 import SetupChecklist from '../components/SetupChecklist.vue';
 import { isCurrent, player, toggle } from '../player';
 import { dashboardAPI } from '../services/api';
-import { errorMessage, looksLikeYoutubeUrl, notify, readStorage, writeStorage } from '../ui';
+import { errorMessage, looksLikeYoutubeUrl, notify, playVideo, readStorage, writeStorage } from '../ui';
 
 export default {
   name: 'Dashboard',
@@ -179,6 +179,7 @@ export default {
   },
   methods: {
     toggle,
+    playVideo,
 
     isPlaying(download) {
       return isCurrent(download) && player.playing;

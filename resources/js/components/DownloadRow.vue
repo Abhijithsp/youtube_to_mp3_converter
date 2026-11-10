@@ -42,7 +42,7 @@
 
       <div class="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-fg-muted">
         <StatusChip v-if="showStatus" :status="download.status" :text="download.status_text || ''" class="shrink-0" />
-        <span class="chip shrink-0">{{ download.format }}<template v-if="download.format === 'mp3'"> · {{ download.quality }}k</template></span>
+        <span class="chip shrink-0">{{ download.format }}<template v-if="download.format === 'mp3'"> · {{ download.quality }}k</template><template v-else-if="download.video_height"> · {{ download.video_height }}p</template></span>
         <!-- Where it came from: a YouTube video, or a file the user converted -->
         <span class="chip shrink-0 !normal-case !tracking-normal" :title="source.title">
           <AppIcon :path="source.icon" :size="13" :class="source.iconClass" />

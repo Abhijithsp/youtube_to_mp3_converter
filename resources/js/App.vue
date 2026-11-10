@@ -122,6 +122,7 @@
     <PlayerBar />
     <SnackbarHost :raised="!!player.track" />
     <ConfirmDialog />
+    <VideoPlayer />
     <LockScreen v-if="ui.locked" />
   </div>
 </template>
@@ -150,6 +151,7 @@ import ConfirmDialog from './components/ConfirmDialog.vue';
 import LockScreen from './components/LockScreen.vue';
 import PlayerBar from './components/PlayerBar.vue';
 import SnackbarHost from './components/SnackbarHost.vue';
+import VideoPlayer from './components/VideoPlayer.vue';
 import WorkerBanner from './components/WorkerBanner.vue';
 import { player } from './player';
 import { checkFinishedDownloads } from './notifications';
@@ -167,7 +169,7 @@ const NAV = [
 
 export default {
   name: 'App',
-  components: { AppIcon, ConfirmDialog, LockScreen, PlayerBar, SnackbarHost, WorkerBanner },
+  components: { AppIcon, ConfirmDialog, LockScreen, PlayerBar, SnackbarHost, VideoPlayer, WorkerBanner },
   data() {
     return {
       ui,

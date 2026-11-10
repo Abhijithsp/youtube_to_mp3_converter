@@ -19,8 +19,18 @@ class SongMover
         return Download::completed()
             ->whereNotNull('file_path')
             ->lazyById(100)
-            ->filter(fn (Download $download) => self::samePath(dirname($download->file_path), $folder)
+            ->filter(fn (Download $download) => self::samePath($this->homeOf($download), $folder)
                 && is_file($download->file_path));
+    }
+
+    /**
+     * The download folder a file belongs to; videos sit in its Videos subfolder
+     */
+    private function homeOf(Download $download): string
+    {
+        $folder = dirname($download->file_path);
+
+        return $download->is_video ? dirname($folder) : $folder;
     }
 
     /**
@@ -35,7 +45,13 @@ class SongMover
         $failed = [];
 
         foreach ($this->songsIn($from) as $download) {
-            $target = self::freeName($to, basename($download->file_path));
+            $folder = $download->is_video ? $to . DIRECTORY_SEPARATOR . Download::VIDEO_FOLDER : $to;
+
+            if (!is_dir($folder)) {
+                @mkdir($folder, 0755, true);
+            }
+
+            $target = self::freeName($folder, basename($download->file_path));
 
             if (!@rename($download->file_path, $target)) {
                 $failed[] = $download->title;

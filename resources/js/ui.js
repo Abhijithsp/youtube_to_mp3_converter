@@ -6,6 +6,7 @@ import { reactive } from 'vue';
 export const ui = reactive({
     snackbar: null, // { id, message, type }
     dialog: null, // { title, message, confirmLabel, danger, checkbox, checked, resolve }
+    video: null, // the download open in the video player
     theme: document.documentElement.dataset.theme || 'light',
     accent: document.documentElement.style.getPropertyValue('--accent-raw').trim() || null, // custom colour, null = default blue
     installPrompt: null, // set when the browser allows installing the app
@@ -49,6 +50,14 @@ export function closeDialog(confirmed) {
     if (!dialog) return;
     ui.dialog = null;
     dialog.resolve(confirmed ? (dialog.checkbox ? { checked: dialog.checked } : true) : false);
+}
+
+export function playVideo(download) {
+    ui.video = download;
+}
+
+export function closeVideo() {
+    ui.video = null;
 }
 
 export function toggleTheme() {

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Jobs\ConvertLocalFileJob;
 use App\Jobs\DownloadYoutubeAudioJob;
+use App\Jobs\DownloadYoutubeVideoJob;
 use App\Support\UploadStore;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -32,6 +33,14 @@ class Download extends Model
     public const LOSSLESS_FORMATS = ['flac', 'wav'];
 
     /**
+     * Video downloads keep YouTube's own streams; they are saved in a subfolder
+     * of the download folder so they do not mix with the music
+     */
+    public const VIDEO_FORMAT = 'mp4';
+
+    public const VIDEO_FOLDER = 'Videos';
+
+    /**
      * Where the audio came from: a YouTube video, a file sent from the browser,
      * or a file on the computer running the app
      */
@@ -56,6 +65,7 @@ class Download extends Model
         'thumbnail_url',
         'format',
         'quality',
+        'video_height',
         'trim_start',
         'trim_end',
         'remove_silence',
@@ -80,13 +90,14 @@ class Download extends Model
 
     protected $attributes = ['source' => self::SOURCE_YOUTUBE];
 
-    protected $appends = ['download_url', 'original_available'];
+    protected $appends = ['download_url', 'original_available', 'is_video'];
 
     // Paths on the computer stay on the server; the UI only needs the file name
     protected $hidden = ['source_path'];
 
     protected $casts = [
         'quality' => 'string',
+        'video_height' => 'integer',
         'file_size' => 'integer',
         'original_file_size' => 'integer',
         'duration' => 'integer',
@@ -129,6 +140,11 @@ class Download extends Model
         );
     }
 
+    protected function isVideo(): Attribute
+    {
+        return Attribute::get(fn () => $this->format === self::VIDEO_FORMAT);
+    }
+
     protected static function booted(): void
     {
         // Cover art taken from a converted file, and an upload still waiting for its
@@ -150,9 +166,13 @@ class Download extends Model
     /**
      * The queue job that makes this download's file
      */
-    public function job(): DownloadYoutubeAudioJob|ConvertLocalFileJob
+    public function job(): DownloadYoutubeAudioJob|DownloadYoutubeVideoJob|ConvertLocalFileJob
     {
-        return $this->isConvertedFile() ? new ConvertLocalFileJob($this) : new DownloadYoutubeAudioJob($this);
+        return match (true) {
+            $this->isConvertedFile() => new ConvertLocalFileJob($this),
+            $this->is_video => new DownloadYoutubeVideoJob($this),
+            default => new DownloadYoutubeAudioJob($this),
+        };
     }
 
     /**
@@ -198,14 +218,15 @@ class Download extends Model
     // Helper methods
     /**
      * An earlier, untrimmed download of the same video in the same format/quality
-     * whose file still exists
+     * (and resolution, for videos) whose file still exists
      */
-    public static function findExisting(string $videoId, string $format, string $quality): ?self
+    public static function findExisting(string $videoId, string $format, string $quality, ?int $videoHeight = null): ?self
     {
         return static::where('youtube_id', $videoId)
             ->where('status', 'completed')
             ->where('format', $format)
             ->where('quality', $quality)
+            ->where('video_height', $videoHeight)
             ->whereNull('trim_start')
             ->whereNull('trim_end')
             ->where('remove_silence', false)

@@ -142,6 +142,17 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Video Job Timeout
+    |--------------------------------------------------------------------------
+    |
+    | Maximum seconds for one MP4 download. Videos are far larger than audio.
+    | Keep this below the queue's retry_after (config/queue.php).
+    |
+    */
+    'video_job_timeout' => env('YOUTUBE_VIDEO_JOB_TIMEOUT', 7200),
+
+    /*
+    |--------------------------------------------------------------------------
     | Job Retry Attempts
     |--------------------------------------------------------------------------
     |
