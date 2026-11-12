@@ -23,10 +23,11 @@
             class="field scroll-thin !h-auto resize-y py-3 font-mono !text-sm leading-relaxed"
             placeholder="Paste one or more links, one per line (or separated by spaces)…"
             spellcheck="false"
+            :disabled="bulkBusy"
           />
           <p class="field-hint">
             <template v-if="bulkLinks.length">
-              {{ bulkLinks.length }} link{{ bulkLinks.length === 1 ? '' : 's' }} found<template v-if="bulkLinks.length > bulkLimit">, only the first {{ bulkLimit }} are queued</template>.
+              {{ bulkLinks.length }} link{{ bulkLinks.length === 1 ? '' : 's' }} found<template v-if="bulkLinks.length > bulkLimit">, using the first {{ bulkLimit }}</template>.
               Playlist links are skipped; use the Playlist page for those.
             </template>
             <template v-else>Up to {{ bulkLimit }} links. Anything that is not a YouTube link is ignored.</template>
@@ -36,18 +37,62 @@
         <div class="grid gap-4 sm:grid-cols-2">
           <div>
             <span class="field-label">Format</span>
-            <SegmentedControl v-model="format" label="Format" :options="audioFormats" :disabled="submitting" />
+            <SegmentedControl v-model="bulkFormat" label="Format" :options="bulkFormats" :disabled="bulkBusy" />
           </div>
-          <div>
+          <div v-if="bulkFormat === 'mp4'">
+            <label for="bulk-resolution" class="field-label">Maximum resolution</label>
+            <select id="bulk-resolution" v-model.number="bulkHeight" class="field" :disabled="bulkBusy">
+              <option v-for="height in bulkHeights" :key="height" :value="height">{{ height }}p{{ height === 2160 ? ' (4K)' : '' }}</option>
+            </select>
+            <p v-if="bulkHeight > 1080" class="field-hint">Higher resolutions may use codecs that some devices cannot play.</p>
+          </div>
+          <div v-else>
             <span class="field-label">Bitrate</span>
-            <SegmentedControl v-model="quality" label="Bitrate" :options="qualityOptions" :disabled="submitting || format !== 'mp3'" />
+            <SegmentedControl v-model="quality" label="Bitrate" :options="qualityOptions" :disabled="bulkBusy || bulkFormat !== 'mp3'" />
           </div>
         </div>
 
-        <button type="button" class="btn btn-filled w-full" :disabled="submitting || !bulkLinks.length" @click="submitBulk">
-          <AppIcon :path="submitting ? mdiLoading : mdiPlaylistPlus" :size="18" :spin="submitting" />
-          {{ submitting ? 'Queueing…' : `Queue ${Math.min(bulkLinks.length, bulkLimit) || ''} download${bulkLinks.length === 1 ? '' : 's'}` }}
-        </button>
+        <div class="grid gap-2" :class="{ 'sm:grid-cols-2': bulkFormat === 'mp4' }">
+          <button type="button" class="btn btn-filled" :disabled="bulkBusy || !bulkLinks.length" @click="submitBulk()">
+            <AppIcon :path="submitting ? mdiLoading : mdiPlaylistPlus" :size="18" :spin="submitting" />
+            {{ submitting ? 'Queueing…' : `Queue ${Math.min(bulkLinks.length, bulkLimit) || ''} ${bulkFormat === 'mp4' ? 'MP4 ' : ''}download${bulkLinks.length === 1 ? '' : 's'}` }}
+          </button>
+          <button v-if="bulkFormat === 'mp4'" type="button" class="btn btn-outlined" :disabled="bulkBusy || !bulkLinks.length" @click="extractBulkLinks">
+            <AppIcon :path="extractingLinks ? mdiLoading : mdiLinkVariant" :size="18" :spin="extractingLinks" />
+            {{ extractingLinks ? 'Extracting…' : (linkResults.length ? 'Refresh links' : 'Extract download links') }}
+          </button>
+        </div>
+
+        <div v-if="extractingLinks || linkResults.length" class="space-y-3 border-t border-line pt-4">
+          <p v-if="extractingLinks" role="status" class="field-hint">Checked {{ linkResults.length }} of {{ Math.min(bulkLinks.length, bulkLimit) }} links.</p>
+          <div v-if="exportText">
+            <label for="bulk-export" class="field-label">Direct download links</label>
+            <textarea id="bulk-export" :value="exportText" readonly rows="4" wrap="off" class="field !h-auto resize-y py-2 font-mono !text-xs" />
+            <p class="field-hint">Import these links promptly. They expire and may require the same internet connection as AudioFetch.</p>
+            <p v-if="linkResults.some((item) => item.audio_url)" class="field-hint">Separate video and audio downloads need to be merged after downloading.</p>
+            <div class="mt-2 flex flex-wrap gap-2">
+              <button type="button" class="btn btn-outlined btn-sm" @click="copyExportLinks">Copy all</button>
+              <button type="button" class="btn btn-outlined btn-sm" @click="saveExportLinks">Save as .txt</button>
+            </div>
+          </div>
+          <ul class="divide-y divide-line">
+            <li v-for="item in linkResults" :key="item.url" class="flex flex-wrap items-center justify-between gap-2 py-2">
+              <div class="min-w-0">
+                <p class="break-words text-sm font-medium">{{ item.title || item.url }}</p>
+                <p class="text-xs text-fg-muted">
+                  {{ item.audio_url ? `${item.height}p · Separate video and audio links` : item.direct_url ? `${item.height}p · One file with sound` : (item.error || 'No direct download links at this resolution') }}
+                </p>
+              </div>
+              <button v-if="!item.direct_url || item.height < bulkHeight" type="button" class="btn btn-outlined btn-sm" :disabled="bulkBusy || item.queued" @click="submitBulk(item)">
+                {{ item.queued ? 'Queued' : 'Queue as MP4' }}
+              </button>
+              <details v-if="item.direct_url || item.video_url" class="w-full">
+                <summary class="cursor-pointer text-xs text-primary">View links for this video</summary>
+                <textarea :value="linksForVideo(item).join('\n')" :aria-label="`Download links for ${item.title || item.url}`" readonly :rows="item.audio_url ? 2 : 1" wrap="off" class="field mt-2 !h-auto py-2 font-mono !text-xs" />
+              </details>
+            </li>
+          </ul>
+        </div>
       </section>
 
       <section v-else class="card overflow-hidden animate-fade-up">
@@ -57,7 +102,7 @@
           </span>
           <div class="min-w-0">
             <h2 class="card-title">{{ bulkResult.queued.length }} queued<template v-if="bulkResult.skipped.length">, {{ bulkResult.skipped.length }} skipped</template></h2>
-            <p class="text-xs text-fg-muted">Downloads run one after another; follow them in the queue.</p>
+            <p class="text-xs text-fg-muted">Follow progress in the queue.</p>
           </div>
         </div>
         <ul v-if="bulkResult.skipped.length" class="divide-y divide-line">
@@ -420,6 +465,11 @@ export default {
       bulkText: '',
       bulkResult: null,
       bulkLimit: 50,
+      bulkVideo: false,
+      bulkHeight: 1080,
+      bulkHeights: [360, 480, 720, 1080, 1440, 2160],
+      linkResults: [],
+      extractingLinks: false,
       input: '',
       inputError: '',
       results: [],
@@ -484,7 +534,7 @@ export default {
     videoQualities() {
       return this.video?.video_qualities || [];
     },
-    // MP4 is only offered for one video at a time, when YouTube lists its resolutions
+    // Single-link MP4 uses the resolutions reported for that video.
     formatOptions() {
       return this.videoQualities.length ? [...this.audioFormats, { value: 'mp4', label: 'MP4' }] : this.audioFormats;
     },
@@ -501,11 +551,29 @@ export default {
     bulkLinks() {
       return extractYoutubeLinks(this.bulkText);
     },
+    bulkFormats() {
+      return [...this.audioFormats, { value: 'mp4', label: 'MP4' }];
+    },
+    bulkFormat: {
+      get() {
+        return this.bulkVideo ? 'mp4' : (this.isVideo ? 'mp3' : this.format);
+      },
+      set(format) {
+        this.bulkVideo = format === 'mp4';
+        if (!this.bulkVideo) this.format = format;
+      },
+    },
+    bulkBusy() {
+      return this.submitting || this.extractingLinks;
+    },
+    exportText() {
+      return this.linkResults.flatMap(this.linksForVideo).join('\n');
+    },
     isUrl() {
       return looksLikeYoutubeUrl(this.input);
     },
     busy() {
-      return this.submitting || (this.download && this.isActive);
+      return this.bulkBusy || (this.download && this.isActive);
     },
     isActive() {
       return this.download && ['pending', 'processing'].includes(this.download.status);
@@ -549,12 +617,20 @@ export default {
     },
   },
   watch: {
+    bulkText() {
+      this.linkResults = [];
+    },
+    bulkHeight() {
+      this.linkResults = [];
+    },
+    bulkVideo() {
+      this.linkResults = [];
+    },
     normalizeVolume(on) {
       writeStorage('normalize-volume', on ? '1' : '0');
     },
     mode(mode) {
       if (mode === 'bulk') {
-        if (this.isVideo) this.format = 'mp3';
         this.$nextTick(() => this.$refs.bulk?.focus());
       }
     },
@@ -776,20 +852,65 @@ export default {
       }
     },
 
-    async submitBulk() {
+    linksForVideo(item) {
+      return [item.direct_url, item.video_url, item.audio_url].filter(Boolean);
+    },
+
+    async extractBulkLinks() {
+      const urls = [...new Set(this.bulkLinks.slice(0, this.bulkLimit))];
+      this.linkResults = [];
+      this.extractingLinks = true;
+      try {
+        for (const url of urls) {
+          try {
+            const { data } = await downloadAPI.extractLink(url, this.bulkHeight);
+            this.linkResults.push({ url, ...data });
+          } catch (error) {
+            if (error.response?.status === 401) break;
+            this.linkResults.push({ url, error: errorMessage(error, 'Could not extract a download link') });
+          }
+        }
+      } finally {
+        this.extractingLinks = false;
+      }
+    },
+
+    async copyExportLinks() {
+      try {
+        await navigator.clipboard.writeText(this.exportText);
+        notify('Download links copied', 'success');
+      } catch {
+        this.$el.querySelector('#bulk-export')?.select();
+        notify('Copy the selected links or save them as a text file', 'info');
+      }
+    },
+
+    saveExportLinks() {
+      const url = URL.createObjectURL(new Blob([this.exportText + '\n'], { type: 'text/plain' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'audiofetch-download-links.txt';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    },
+
+    async submitBulk(item = null) {
       this.submitting = true;
       try {
         const { data } = await downloadAPI.bulk({
-          urls: this.bulkLinks.slice(0, this.bulkLimit),
-          format: this.format,
+          urls: item ? [item.url] : this.bulkLinks.slice(0, this.bulkLimit),
+          format: this.bulkFormat,
           quality: this.quality,
+          video_height: this.bulkFormat === 'mp4' ? this.bulkHeight : undefined,
         });
-        this.bulkResult = data;
+        if (item) item.queued = true;
+        else this.bulkResult = data;
         notify(data.message, 'success');
       } catch (error) {
         // 422 with a result means every link was skipped: show why
         if (error.response?.data?.skipped) {
-          this.bulkResult = error.response.data;
+          if (item) notify(error.response.data.skipped[0]?.reason || 'Nothing was queued', 'info');
+          else this.bulkResult = error.response.data;
         } else {
           notify(errorMessage(error, 'Could not queue the links'), 'error');
         }

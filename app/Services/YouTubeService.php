@@ -158,17 +158,7 @@ class YouTubeService
     public function extractVideoInfo(string $url): array
     {
         try {
-            $result = $this->runYtDlp(['--dump-json', '--no-playlist', '--no-warnings', $url]);
-
-            if (!$result->successful()) {
-                throw $this->failure('Failed to extract video info', $result);
-            }
-
-            $info = json_decode($result->output(), true);
-
-            if (!$info) {
-                throw new Exception('Invalid JSON response from yt-dlp');
-            }
+            $info = $this->readVideoInfo($url);
 
             return [
                 'id' => $info['id'] ?? null,
@@ -194,6 +184,57 @@ class YouTubeService
             ]);
             throw $e;
         }
+    }
+
+    private function readVideoInfo(string $url, int $timeout = 120): array
+    {
+        $result = $this->runYtDlp(['--dump-json', '--no-playlist', '--no-warnings', $url], $timeout);
+
+        if (!$result->successful()) {
+            throw $this->failure('Failed to extract video info', $result);
+        }
+
+        $info = json_decode($result->output(), true);
+        if (!is_array($info) || !$info) {
+            throw new Exception('Invalid JSON response from yt-dlp');
+        }
+
+        return $info;
+    }
+
+    public function extractDirectMp4(string $url, int $maxHeight): array
+    {
+        $info = $this->readVideoInfo($url, 25);
+        $streams = collect($info['formats'] ?? [])
+            ->filter(fn (array $stream) => empty($stream['has_drm'])
+                && ($stream['protocol'] ?? null) === 'https'
+                && empty($stream['fragments'])
+                && str_starts_with($stream['url'] ?? '', 'https://'));
+
+        $videos = $streams
+            ->filter(fn (array $stream) => in_array($stream['ext'] ?? null, ['mp4', 'webm'], true)
+                && !empty($stream['vcodec']) && $stream['vcodec'] !== 'none'
+                && ($stream['height'] ?? 0) > 0 && $stream['height'] <= $maxHeight)
+            ->sortByDesc(fn (array $stream) => [$stream['height'], $stream['ext'] === 'mp4', $stream['tbr'] ?? 0]);
+        $combined = $videos->first(fn (array $stream) => !empty($stream['acodec']) && $stream['acodec'] !== 'none');
+        $video = $videos->first(fn (array $stream) => ($stream['acodec'] ?? null) === 'none');
+        $audio = $streams
+            ->filter(fn (array $stream) => in_array($stream['ext'] ?? null, ['m4a', 'webm'], true)
+                && ($stream['vcodec'] ?? null) === 'none'
+                && !empty($stream['acodec']) && $stream['acodec'] !== 'none')
+            ->sortByDesc(fn (array $stream) => [$stream['ext'] === 'm4a', $stream['abr'] ?? $stream['tbr'] ?? 0])
+            ->first();
+
+        $split = $video && $audio && $video['height'] > ($combined['height'] ?? 0);
+        $format = $split ? $video : $combined;
+
+        return [
+            'title' => $info['title'] ?? 'Unknown Title',
+            'height' => isset($format['height']) ? (int) $format['height'] : null,
+            'direct_url' => $split ? null : ($combined['url'] ?? null),
+            'video_url' => $split ? $video['url'] : null,
+            'audio_url' => $split ? $audio['url'] : null,
+        ];
     }
 
     /**

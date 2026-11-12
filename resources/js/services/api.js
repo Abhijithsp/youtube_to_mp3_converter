@@ -54,9 +54,12 @@ export const downloadAPI = {
         return api.post("/downloads", data);
     },
 
-    // Queue several links at once: { urls: [...], format, quality }
     bulk(data) {
         return api.post("/downloads/bulk", data);
+    },
+
+    extractLink(url, videoHeight) {
+        return api.post("/downloads/extract-link", { url, video_height: videoHeight });
     },
 
     // Loudness outline for the player's seek bar (created on first request if missing)

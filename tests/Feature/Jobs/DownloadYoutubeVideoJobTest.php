@@ -209,11 +209,96 @@ class DownloadYoutubeVideoJobTest extends TestCase
             ->assertUnprocessable()
             ->assertJsonValidationErrors('format');
 
-        // Bulk stays audio only
-        $this->postJson('/api/downloads/bulk', ['urls' => [self::URL], 'format' => 'mp4', 'quality' => 320])
-            ->assertUnprocessable();
+        Queue::assertNothingPushed();
+    }
+
+    public function test_bulk_queues_mp4_at_default_and_explicit_resolutions(): void
+    {
+        Queue::fake();
+        $existing = Download::factory()->completed($this->makeAudioFile('video.mp4'))->create([
+            'youtube_id' => 'TpHlTBRLHgs',
+            'format' => 'mp4',
+            'quality' => '320',
+            'video_height' => 720,
+        ]);
+
+        $this->postJson('/api/downloads/bulk', ['urls' => [self::URL, self::URL], 'format' => 'mp4'])
+            ->assertCreated()
+            ->assertJsonPath('queued.0.video_height', 1080)
+            ->assertJsonPath('skipped.0.reason', 'Listed twice');
+
+        $this->postJson('/api/downloads/bulk', ['urls' => [self::URL], 'format' => 'mp4', 'video_height' => 2160])
+            ->assertCreated()
+            ->assertJsonPath('queued.0.video_height', 2160);
+
+        $this->postJson('/api/downloads/bulk', ['urls' => [self::URL], 'format' => 'mp4', 'video_height' => 720])
+            ->assertUnprocessable()
+            ->assertJsonPath('skipped.0.download.id', $existing->id);
+
+        $this->postJson('/api/downloads/bulk', ['urls' => [self::URL], 'format' => 'mp4', 'video_height' => 0])
+            ->assertJsonValidationErrors('video_height');
+
+        Queue::assertPushed(DownloadYoutubeVideoJob::class, 2);
+        Queue::assertNotPushed(DownloadYoutubeAudioJob::class);
+    }
+
+    public function test_link_export_chooses_a_combined_mp4_below_the_limit_without_queuing(): void
+    {
+        Queue::fake();
+        $directUrl = 'https://media.example.com/video?signature=temporary';
+        Process::fake(fn () => json_encode([
+            'title' => 'LADY',
+            'formats' => [
+                ['ext' => 'mp4', 'height' => 1080, 'vcodec' => 'avc1', 'acodec' => 'none', 'url' => 'https://media.example.com/video-only', 'protocol' => 'https'],
+                ['ext' => 'mp4', 'height' => 720, 'vcodec' => 'avc1', 'acodec' => 'mp4a', 'url' => $directUrl, 'protocol' => 'https'],
+            ],
+        ]));
+
+        $response = $this->postJson('/api/downloads/extract-link', ['url' => self::URL])
+            ->assertOk()
+            ->assertJsonPath('title', 'LADY')
+            ->assertJsonPath('height', 720)
+            ->assertJsonPath('direct_url', $directUrl);
+        $this->assertStringContainsString('no-store', $response->headers->get('Cache-Control'));
+
+        $this->postJson('/api/downloads/extract-link', ['url' => self::URL, 'video_height' => 480])
+            ->assertOk()
+            ->assertJsonPath('direct_url', null);
 
         Queue::assertNothingPushed();
+        $this->assertDatabaseCount('downloads', 0);
+    }
+
+    public function test_link_export_rejects_non_video_urls_before_extraction(): void
+    {
+        $this->postJson('/api/downloads/extract-link', ['url' => 'https://example.com/video'])
+            ->assertUnprocessable();
+        $this->postJson('/api/downloads/extract-link', ['url' => 'https://www.youtube.com/playlist?list=PL123'])
+            ->assertUnprocessable();
+
+        Process::assertNothingRan();
+    }
+
+    public function test_link_export_returns_both_stream_urls_when_they_offer_higher_resolution(): void
+    {
+        Process::fake(fn () => json_encode(['formats' => [
+            ['ext' => 'mp4', 'height' => 1080, 'vcodec' => 'avc1', 'acodec' => 'none', 'url' => 'https://media.example.com/video', 'protocol' => 'https'],
+            ['ext' => 'm4a', 'vcodec' => 'none', 'acodec' => 'mp4a', 'url' => 'https://media.example.com/audio', 'protocol' => 'https'],
+            ['ext' => 'mp4', 'height' => 720, 'vcodec' => 'avc1', 'acodec' => 'mp4a', 'url' => 'https://media.example.com/combined', 'protocol' => 'https'],
+        ]]));
+
+        $this->postJson('/api/downloads/extract-link', ['url' => self::URL])
+            ->assertOk()
+            ->assertJsonPath('height', 1080)
+            ->assertJsonPath('direct_url', null)
+            ->assertJsonPath('video_url', 'https://media.example.com/video')
+            ->assertJsonPath('audio_url', 'https://media.example.com/audio');
+
+        $this->postJson('/api/downloads/extract-link', ['url' => self::URL, 'video_height' => 720])
+            ->assertOk()
+            ->assertJsonPath('direct_url', 'https://media.example.com/combined')
+            ->assertJsonPath('video_url', null)
+            ->assertJsonPath('audio_url', null);
     }
 
     public function test_the_same_video_is_only_reused_at_the_same_resolution(): void

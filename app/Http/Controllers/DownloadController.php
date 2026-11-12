@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\Download;
-use App\Jobs\DownloadYoutubeAudioJob;
 use App\Services\MetadataService;
 use App\Services\WaveformService;
 use App\Services\AudioConverterService;
@@ -208,12 +207,16 @@ class DownloadController extends Controller
         $data = $request->validate([
             'urls' => 'required|array|min:1|max:' . self::BULK_LIMIT,
             'urls.*' => 'required|string|max:2000',
-            'format' => ['required', Rule::in(Download::FORMATS)],
-            'quality' => 'required|in:192,256,320',
+            'format' => ['required', Rule::in([...Download::FORMATS, Download::VIDEO_FORMAT])],
+            'quality' => 'exclude_if:format,mp4|required|in:192,256,320',
+            'video_height' => 'exclude_unless:format,mp4|sometimes|required|integer|min:100|max:8000',
         ], [
             'urls.max' => 'Paste at most ' . self::BULK_LIMIT . ' links at a time.',
         ]);
 
+        $isVideo = $data['format'] === Download::VIDEO_FORMAT;
+        $quality = $isVideo ? '320' : (string) $data['quality'];
+        $videoHeight = $isVideo ? (int) ($data['video_height'] ?? 1080) : null;
         $delaySeconds = (int) Setting::get('rate_limit_seconds', config('youtube-converter.rate_limit_seconds', 2));
         $queued = [];
         $skipped = [];
@@ -242,7 +245,7 @@ class DownloadController extends Controller
             }
             $seen[$videoId] = true;
 
-            if ($existing = Download::findExisting($videoId, $data['format'], (string) $data['quality'])) {
+            if ($existing = Download::findExisting($videoId, $data['format'], $quality, $videoHeight)) {
                 $skipped[] = ['url' => $url, 'reason' => 'Already downloaded', 'download' => $existing];
                 continue;
             }
@@ -252,12 +255,13 @@ class DownloadController extends Controller
                 'youtube_id' => $videoId,
                 'title' => Download::PLACEHOLDER_TITLE,
                 'format' => $data['format'],
-                'quality' => (string) $data['quality'],
+                'quality' => $quality,
+                'video_height' => $videoHeight,
                 'status' => 'pending',
             ]);
 
             // Spaced out like playlist imports, to avoid YouTube rate limits
-            DownloadYoutubeAudioJob::dispatch($download)->delay(now()->addSeconds(count($queued) * $delaySeconds));
+            dispatch($download->job())->delay(now()->addSeconds(count($queued) * $delaySeconds));
 
             $queued[] = $download;
         }
@@ -270,6 +274,31 @@ class DownloadController extends Controller
             'queued' => $queued,
             'skipped' => $skipped,
         ], count($queued) ? 201 : 422);
+    }
+
+    public function extractLink(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'url' => 'required|string|max:2000',
+            'video_height' => 'sometimes|required|integer|min:100|max:8000',
+        ]);
+
+        $url = trim($data['url']);
+        $videoId = $this->youtubeService->validateUrl($url) ? $this->youtubeService->extractVideoId($url) : null;
+        if (!$videoId || !preg_match('/\A[A-Za-z0-9_-]{11}\z/', $videoId)) {
+            return response()->json(['message' => 'Use a YouTube video link.'], 422);
+        }
+
+        try {
+            $link = $this->youtubeService->extractDirectMp4(
+                'https://www.youtube.com/watch?v=' . $videoId,
+                (int) ($data['video_height'] ?? 1080),
+            );
+        } catch (\Exception) {
+            return response()->json(['message' => 'Could not extract a download link. Try again or queue the video as MP4.'], 502);
+        }
+
+        return response()->json($link)->header('Cache-Control', 'no-store');
     }
 
     /**
